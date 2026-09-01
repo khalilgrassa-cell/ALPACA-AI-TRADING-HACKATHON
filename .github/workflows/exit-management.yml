@@ -9,6 +9,13 @@ name: Exit Management Cycle
 #
 # GitHub Actions cron is best-effort and can be delayed by several minutes under load — this is
 # not a substitute for real-time risk monitoring, just a much tighter interval than the full cycle.
+#
+# 2026-09-01: scheduled runs stopped firing entirely after a since-fixed syntax error was briefly
+# pushed to this file — GitHub's cron registration for a workflow apparently doesn't self-heal
+# once it hits an unparseable file, even after the file becomes valid again. Disabled/re-enabled
+# via the API to force re-registration; this comment-only commit is a second nudge in case the
+# API toggle alone wasn't enough. Verify the next scheduled run actually appears with
+# event == "schedule" before trusting this is fixed.
 
 on:
   schedule:
