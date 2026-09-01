@@ -87,7 +87,7 @@ STRATEGY_SIGNAL = {
 # much tighter schedule) — single source of truth so it can't be flipped in one entry point and
 # forgotten in the other. False: the exit agent reports what it would close but never actually
 # calls close_position.
-EXECUTE_EXITS = False
+EXECUTE_EXITS = True
 
 # Generic OCC option symbol: {root}{YYMMDD}{C|P}{strike*1000, 8 digits} — root is 1-6 letters,
 # not hardcoded to one underlying, since the universe now spans ~150 symbols.

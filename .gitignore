@@ -1,6 +1,7 @@
 .env
 .*.swp
 *.swp
+.~lock.*#
 __pycache__/
 *.pyc
 .venv/
