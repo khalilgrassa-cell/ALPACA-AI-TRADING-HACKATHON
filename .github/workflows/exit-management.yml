@@ -45,6 +45,9 @@ jobs:
           from groq import Groq
 
           key = os.environ['GROQ_API_KEY']
+          print('key length:', len(key))
+          print('key repr (first/last 6 chars):', repr(key[:6]), repr(key[-6:]))
+          print('has whitespace/control chars:', any(c.isspace() or ord(c) < 32 for c in key))
 
           print('--- default httpx (whatever family it picks) ---')
           try:
