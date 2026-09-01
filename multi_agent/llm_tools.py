@@ -199,6 +199,16 @@ def _create_completion_with_fallback(client, models, **kwargs):
         except APIConnectionError as exc:
             last_exc = exc
             print(f"Model {model}'s request kept failing to connect even after retries — falling back to the next model.")
+        except BadRequestError as exc:
+            # Must come before the APIStatusError clause below — BadRequestError is a subclass of
+            # it, so listing them in this order is what lets this one run first. Tags which model
+            # actually produced the malformed generation, so a caller that can't recover a usable
+            # answer from it (see _recover_final_answer_from_tool_use_failure) can retry with that
+            # one model excluded instead of aborting outright — reasoning models occasionally emit
+            # prose instead of a parseable tool call/JSON (observed live: Groq's own
+            # "output_parse_failed"), and a different model in the list often just works.
+            exc.failed_model = model
+            raise
         except APIStatusError as exc:
             if not _is_oversized_request_error(exc):
                 raise
@@ -250,22 +260,31 @@ async def run_agent(system_prompt, user_prompt, mcp_session, mcp_tool_names, loc
     call_timeout = CALL_TIMEOUT_SECONDS_PER_MODEL * len(models)
 
     for _ in range(max_turns):
-        try:
-            response, _ = await asyncio.wait_for(
-                asyncio.to_thread(
-                    _create_completion_with_fallback,
-                    client, models, messages=messages, max_tokens=1024,
-                    tools=tool_schemas or None, tool_choice="auto" if tool_schemas else None,
-                ),
-                timeout=call_timeout,
-            )
-        except asyncio.TimeoutError:
-            raise RuntimeError(f"Groq completion call did not return within {call_timeout}s")
-        except BadRequestError as exc:
-            recovered = _recover_final_answer_from_tool_use_failure(exc)
-            if recovered is not None:
-                return recovered, messages
-            raise
+        remaining_models = models
+        while True:
+            try:
+                response, _ = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        _create_completion_with_fallback,
+                        client, remaining_models, messages=messages, max_tokens=1024,
+                        tools=tool_schemas or None, tool_choice="auto" if tool_schemas else None,
+                    ),
+                    timeout=call_timeout,
+                )
+                break
+            except asyncio.TimeoutError:
+                raise RuntimeError(f"Groq completion call did not return within {call_timeout}s")
+            except BadRequestError as exc:
+                recovered = _recover_final_answer_from_tool_use_failure(exc)
+                if recovered is not None:
+                    return recovered, messages
+                # Unrecoverable malformed generation from one model — drop just that model and
+                # retry with whatever's left, rather than aborting the whole cycle over what's
+                # often a one-model quirk (see _create_completion_with_fallback's failed_model tag).
+                failed_model = getattr(exc, "failed_model", None)
+                remaining_models = [m for m in remaining_models if m != failed_model]
+                if failed_model is None or not remaining_models:
+                    raise
         message = response.choices[0].message
         messages.append({
             "role": "assistant",

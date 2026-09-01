@@ -359,6 +359,39 @@ def test_run_agent_raises_clear_error_when_completion_call_times_out():
             assert "did not return within" in str(exc)
 
 
+def test_run_agent_falls_back_to_next_model_on_unrecoverable_malformed_generation():
+    # Reproduces a real live failure: openai/gpt-oss-120b (a reasoning model) occasionally emits
+    # plain prose instead of a parseable tool call, which Groq rejects as a 400 with code
+    # "output_parse_failed" — unlike "tool_use_failed", there's no usable answer to recover from
+    # failed_generation here, so the only useful move is trying a different model.
+    mcp_session = MagicMock()
+    mcp_session.list_tools = AsyncMock(return_value=SimpleNamespace(tools=[]))
+
+    error_body = {
+        "error": {
+            "message": "Parsing failed. The model generated output that could not be parsed.",
+            "type": "invalid_request_error",
+            "code": "output_parse_failed",
+            "failed_generation": "We have get_clock response: is_open true. So market is open now.",
+        }
+    }
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = MagicMock(side_effect=[
+        bad_request_error(error_body),  # model-a produces unparseable prose
+        chat_response(content='{"ok": true}'),  # model-b succeeds
+    ])
+
+    with patch.object(llm_tools, "get_client", return_value=fake_client):
+        text, messages = asyncio.run(run_agent(
+            "system", "user", mcp_session, mcp_tool_names=set(), local_tools=[],
+            models=["model-a", "model-b"],
+        ))
+
+    assert text == '{"ok": true}'
+    calls = fake_client.chat.completions.create.call_args_list
+    assert [c.kwargs["model"] for c in calls] == ["model-a", "model-b"]
+
+
 def test_run_agent_reraises_bad_request_errors_that_arent_tool_use_hallucinations():
     mcp_session = MagicMock()
     mcp_session.list_tools = AsyncMock(return_value=SimpleNamespace(tools=[]))
@@ -374,3 +407,16 @@ def test_run_agent_reraises_bad_request_errors_that_arent_tool_use_hallucination
             assert False, "expected BadRequestError to propagate"
         except BadRequestError:
             pass
+
+
+def test_get_client_strips_whitespace_from_api_key(monkeypatch):
+    # Reproduces a real live failure: a trailing newline copy-pasted into the GROQ_API_KEY
+    # GitHub Actions secret made httpx reject every request outright as an illegal header value,
+    # before any network call — instantly, and with no retry or fallback able to help.
+    monkeypatch.setattr(llm_tools, "_client", None)
+    monkeypatch.setenv("GROQ_API_KEY", "  gsk_test_key\n")
+
+    with patch.object(llm_tools, "Groq") as fake_groq_cls:
+        llm_tools.get_client()
+
+    assert fake_groq_cls.call_args.kwargs["api_key"] == "gsk_test_key"
