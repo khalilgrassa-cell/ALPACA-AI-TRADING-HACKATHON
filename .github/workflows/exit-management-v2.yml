@@ -2,7 +2,7 @@ name: Exit Management Cycle
 
 # Runs exit_manager.py alone — no universe scan, no new candidates — every 5 minutes during US
 # market hours, separately from (and tighter than) the every-15-minutes full entry-scan cycle in
-# multi-agent-trading.yml (which also runs its own exit check at the end of each cycle, at that
+# multi-agent-trading-v2.yml (which also runs its own exit check at the end of each cycle, at that
 # same 15-minute cadence). Protecting an already-open position from an adverse intraday move
 # (stop-loss/take-profit/near-expiration) is more time-sensitive than finding new entries, so this
 # job checks more often than the full pipeline does.
@@ -47,6 +47,6 @@ jobs:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          # See multi-agent-trading.yml's comment on this — same reasoning applies here.
+          # See multi-agent-trading-v2.yml's comment on this — same reasoning applies here.
           PYTHONUNBUFFERED: "1"
         run: python multi_agent/exit_manager.py

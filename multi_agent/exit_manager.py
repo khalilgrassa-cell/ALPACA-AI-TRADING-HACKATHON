@@ -2,7 +2,7 @@
 Strategy/Risk/Order chain. Protecting an already-open position from an adverse intraday move is
 more time-sensitive than finding new entries, so this is meant to be scheduled more often (every
 5 minutes) than the full orchestrator.py cycle (every 15 minutes, which also runs its own exit
-check at the end) — see .github/workflows/exit-management.yml."""
+check at the end) — see .github/workflows/exit-management-v2.yml."""
 import asyncio
 import os
 import sys

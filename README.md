@@ -70,8 +70,8 @@ own UI.
 │       ├── test_exit_manager.py
 │       └── test_orchestrator.py
 ├── .github/workflows/
-│   ├── multi-agent-trading.yml   # full pipeline, every 15 min during market hours
-│   └── exit-management.yml       # exit-only checks, every 5 min during market hours
+│   ├── multi-agent-trading-v2.yml   # full pipeline, every 15 min during market hours
+│   └── exit-management-v2.yml       # exit-only checks, every 5 min during market hours
 ├── docker-compose.yml
 ├── requirements.txt
 ├── pytest.ini
@@ -116,9 +116,9 @@ docker run --rm --env-file .env alpaca-multi-agent
 # or: docker compose run --rm multi-agent
 ```
 
-`.github/workflows/multi-agent-trading.yml` and `exit-management.yml` run
-the pipeline on a cron schedule via GitHub Actions (repo secrets, no server
-to host) — see
+`.github/workflows/multi-agent-trading-v2.yml` and `exit-management-v2.yml`
+run the pipeline on a cron schedule via GitHub Actions (repo secrets, no
+server to host) — see
 [`multi_agent/README.md`](multi_agent/README.md#scheduled-runs-github-actions)
 for the schedule and the reasoning behind it.
 

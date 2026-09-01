@@ -1,5 +1,5 @@
 """Polls this repo's GitHub Actions runs and appends new ones to a local text file, so you can
-see when the scheduled cron pipeline (multi-agent-trading.yml / exit-management.yml) fired
+see when the scheduled cron pipeline (multi-agent-trading-v2.yml / exit-management-v2.yml) fired
 without opening the GitHub UI.
 
 The repo is private, so this needs a token: add GITHUB_TOKEN=... to .env, using a token with

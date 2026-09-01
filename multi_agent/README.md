@@ -260,10 +260,10 @@ the build context entirely.
 
 ### Scheduled runs (GitHub Actions)
 
-`.github/workflows/multi-agent-trading.yml` runs the full pipeline every 15
-minutes during US market hours (weekdays) using the same `pip install` +
+`.github/workflows/multi-agent-trading-v2.yml` runs the full pipeline every
+15 minutes during US market hours (weekdays) using the same `pip install` +
 `uv tool install` steps as local setup — no Docker needed for this path, no
-server to host. `.github/workflows/exit-management.yml` runs the lighter
+server to host. `.github/workflows/exit-management-v2.yml` runs the lighter
 exit-only check (`exit_manager.py`) every 5 minutes over the same window,
 tighter than the full cycle since protecting an open position is more
 time-sensitive than finding new entries — the full cycle also runs its own
@@ -272,6 +272,13 @@ layered on top, not the only place exits happen. Add `ALPACA_API_KEY`,
 `ALPACA_SECRET_KEY`, and `GROQ_API_KEY` as repository secrets, and both run
 on their own; `workflow_dispatch` is also enabled on each for on-demand
 manual runs from the Actions tab.
+
+**Why `-v2` in the filenames:** a syntax error briefly pushed to one of
+these files during debugging got GitHub's cron *scheduler* stuck — manual
+runs (`workflow_dispatch`) worked fine again once the file was fixed, but
+the automatic `schedule` trigger never resumed on its own, even after a
+disable/re-enable via the API. Renaming to a fresh file path forces GitHub
+to register both as brand-new workflows with no inherited scheduler state.
 
 Running the full cycle every 15 minutes instead of once a day multiplies
 Groq token usage and Alpaca order activity accordingly — each run puts up to

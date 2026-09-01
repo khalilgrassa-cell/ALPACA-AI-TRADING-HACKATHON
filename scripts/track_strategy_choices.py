@@ -1,5 +1,5 @@
 """Polls this repo's "Multi-Agent Trading Cycle" runs (the only workflow that runs the
-Sentiment -> Strategy chain — exit-management.yml doesn't), downloads each new completed run's
+Sentiment -> Strategy chain — exit-management-v2.yml doesn't), downloads each new completed run's
 logs, and appends one row per symbol to a local CSV: the sentiment reading and the strategy
 chosen for every market the pipeline looked at that cycle.
 
@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 REPO = "khalilgrassa-cell/ALPACA-AI-TRADING-HACKATHON"
-WORKFLOW_FILE = "multi-agent-trading.yml"
+WORKFLOW_FILE = "multi-agent-trading-v2.yml"
 TOKEN = os.environ.get("GITHUB_TOKEN")
 POLL_SECONDS = 60
 ROOT = Path(__file__).parent.parent
