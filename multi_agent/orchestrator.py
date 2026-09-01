@@ -85,7 +85,7 @@ async def process_candidate(session, candidate, risk_budget, committed):
 async def main():
     async with connect() as session:
         try:
-            print("=== Market Conditions Agent ===")
+            print("=== Market Conditions Check ===")
             conditions_result = await check_market_conditions(session)
             print(conditions_result)
 

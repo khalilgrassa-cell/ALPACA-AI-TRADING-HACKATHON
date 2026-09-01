@@ -4,17 +4,21 @@ lablab.ai × Alpaca AI Trading Agents Hackathon submission.
 
 A multi-agent options trading pipeline that talks to Alpaca **only** through
 Alpaca's official MCP server — the same interface an LLM agent's tool-use
-loop would call — rather than the REST API, SDK, or CLI directly. One
-deterministic scan stage plus five specialized LLM agents (market
-conditions, sentiment, strategy selection, risk, execution), running on Groq
-(with automatic fallback across several Groq-hosted models), each reason
-over a narrow slice of tools and hand their decision to the next stage in
-the chain. The universe scan ranks the whole trading universe by momentum
-strength and keeps the top 5 "hottest"/trending symbols each cycle; the
-strategy agent then picks from a small menu — a plain long call/put, or a
-higher-conviction 2-leg risk-reversal combo — per candidate. There's no
-reporting/logging stage — every decision prints to stdout, and fills are
-tracked directly in Alpaca's own UI.
+loop would call — rather than the REST API, SDK, or CLI directly. Two
+deterministic (no-LLM) stages — is the market open, and a momentum scan of
+the whole trading universe — feed four specialized LLM agents (sentiment,
+strategy selection, risk, execution), running on Groq (with automatic
+fallback across several Groq-hosted models), each reasoning over a narrow
+slice of tools and handing their decision to the next stage in the chain.
+Market-open and momentum-threshold checks are exact math, not judgment
+calls, so they run as plain code instead of a model call — one fewer
+network round-trip and single point of failure per cycle. The universe scan
+ranks the whole trading universe by momentum strength and keeps the top 5
+"hottest"/trending symbols each cycle; the strategy agent then picks from a
+small menu — a plain long call/put, or a higher-conviction 2-leg
+risk-reversal combo — per candidate. There's no reporting/logging stage —
+every decision prints to stdout, and fills are tracked directly in Alpaca's
+own UI.
 
 ## Project layout
 
@@ -47,7 +51,7 @@ tracked directly in Alpaca's own UI.
 │   ├── Dockerfile                    # build from repo root: -f multi_agent/Dockerfile
 │   ├── llm_tools.py                   # MCP↔Groq tool bridge + manual tool-use loop
 │   ├── local_tools.py                 # thin wrappers over strategy/momentum_strategy.py
-│   ├── market_conditions_agent.py     # is the market open?
+│   ├── market_conditions_agent.py     # is the market open? (deterministic, no LLM)
 │   ├── universe_scanner.py            # market data → top-5 hottest momentum candidates (no LLM)
 │   ├── sentiment_agent.py             # news sentiment check, veto-only
 │   ├── strategy_agent.py              # picks a strategy from the menu (long option or risk-reversal combo)

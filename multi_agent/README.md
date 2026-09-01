@@ -1,19 +1,19 @@
 # Multi-Agent Trading Pipeline
 
-The trading strategy, executed as six specialized LLM agents (plus one
-deterministic scan step). Each agent is a real model call (via the Groq API,
+The trading strategy, executed as four specialized LLM agents (plus two
+deterministic steps). Each agent is a real model call (via the Groq API,
 with automatic fallback across several Groq-hosted models — see "Model &
 cost" below) with its own system prompt and its own narrow slice of tools,
 orchestrated into a chain by `orchestrator.py`.
 
 ```
-Market-Conditions   Universe Scan     Sentiment      Strategy      Risk         Trading
-   Agent      →     (deterministic) → Agent      →   Agent    →    Agent    →    Agent
+Market Conditions   Universe Scan     Sentiment      Strategy      Risk         Trading
+(deterministic)  →  (deterministic) → Agent      →   Agent    →    Agent    →    Agent
 (is it open?)      (top 5 hottest/    (news         (which        (contract    (execution)
                     trending symbols)  sentiment)     strategy?)    + sizing)
 ```
 
-If the market-conditions agent reports the market closed, the pipeline skips
+If the market-conditions check reports the market closed, the pipeline skips
 straight past everything else for that cycle — no scanning, no
 sentiment/strategy/risk, no orders. There is no reporting/logging stage —
 every decision is printed to stdout as it happens, and actual fills are
@@ -42,19 +42,26 @@ to validate the signal against history rather than trade it live.
 
 | Stage | File | MCP tools | Local tools | Produces |
 |---|---|---|---|---|
-| Market Conditions | `market_conditions_agent.py` | `get_clock`, `get_calendar` | — | `{market_open, reasoning}` |
+| Market Conditions | `market_conditions_agent.py` (no LLM — pure lookup) | `get_clock` | — | `{market_open, reasoning}` |
 | Universe Scan | `universe_scanner.py` (no LLM — pure math) | `get_stock_bars` | — | list of `{symbol, signal, current_price, momentum_pct}`, top `TOP_N_HOTTEST` by strength |
 | Sentiment | `sentiment_agent.py` | `get_news` | — | `{sentiment, signal, overridden, reasoning}` |
 | Strategy | `strategy_agent.py` | — | — | `{strategy, reasoning}` |
 | Risk | `risk_agent.py` | `get_account_info`, `get_option_chain` | `select_option_contract`, `calculate_position_size`, `calculate_combo_position_size` | `{strategy, legs, qty, should_trade, reasoning}` |
 | Trader | `trading_agent.py` | `place_option_order`, `get_all_positions`, `close_position` | `check_exit_rule` | `{order_submitted, order_result, reasoning}` per leg; `{open_positions, exits, reasoning}` for exit management |
 
-Each stage's final answer is a JSON object (enforced by its system prompt and
-parsed with `llm_tools.parse_json_response`), which becomes the next stage's
-input. The Universe Scan is the one non-LLM stage — "does this cross a
-numeric momentum threshold, and is it in the top 5 by strength" is exact
-math, not judgment, so it runs as a deterministic batch screen instead of an
-LLM call per symbol.
+Each LLM stage's final answer is a JSON object (enforced by its system
+prompt and parsed with `llm_tools.parse_json_response`), which becomes the
+next stage's input. Market Conditions and the Universe Scan are the two
+non-LLM stages: "is the market open" is a single boolean field on
+`get_clock`'s response, and "does this cross a numeric momentum threshold,
+and is it in the top 5 by strength" is exact math — neither is a judgment
+call, so both run as plain code instead of a model call. Beyond the obvious
+cost/latency savings, this also removes a single point of failure: an LLM
+call is the one part of this pipeline that can stall on a degraded
+connection for minutes (see `llm_tools.CALL_TIMEOUT_SECONDS_PER_MODEL`),
+and market-open is checked at the very start of every cycle — running it as
+a network+parsing call was adding that risk before anything else even ran,
+for a question with no ambiguity in the answer.
 
 **The sentiment agent can only veto, never invent or flip, a trade.** Its
 prompt says so, but that's not trusted alone —
