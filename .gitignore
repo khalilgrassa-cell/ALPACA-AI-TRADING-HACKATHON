@@ -7,3 +7,5 @@ __pycache__/
 .venv/
 backtest_chart.png
 multi_agent/logs/
+github_runs.log
+.github_watch_state.json

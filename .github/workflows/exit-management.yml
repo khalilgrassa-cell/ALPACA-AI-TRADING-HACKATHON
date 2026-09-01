@@ -35,6 +35,15 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      - name: TEMP debug — check Groq connectivity
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          curl -sv --max-time 20 https://api.groq.com/openai/v1/models \
+            -H "Authorization: Bearer $GROQ_API_KEY" -o /tmp/groq_resp.json || echo "CURL_EXIT=$?"
+          echo "--- response body ---"
+          cat /tmp/groq_resp.json || true
+
       - name: Run exit management
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
