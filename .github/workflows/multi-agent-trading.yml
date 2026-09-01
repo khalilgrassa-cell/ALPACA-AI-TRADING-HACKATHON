@@ -1,0 +1,35 @@
+name: Multi-Agent Trading Cycle
+
+on:
+  schedule:
+    # Every 15 minutes, 13:30-20:00 UTC (~9:30am-4:00pm US/Eastern during EDT), weekdays —
+    # matches exit-management.yml's window. GitHub Actions cron is best-effort and can be
+    # delayed by several minutes under load.
+    - cron: "*/15 13-20 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv and the Alpaca MCP server
+        run: |
+          pip install uv
+          uv tool install alpaca-mcp-server
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the multi-agent trading pipeline
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python multi_agent/orchestrator.py

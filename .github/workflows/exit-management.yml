@@ -1,0 +1,43 @@
+name: Exit Management Cycle
+
+# Runs exit_manager.py alone — no universe scan, no new candidates — every 5 minutes during US
+# market hours, separately from (and tighter than) the every-15-minutes full entry-scan cycle in
+# multi-agent-trading.yml (which also runs its own exit check at the end of each cycle, at that
+# same 15-minute cadence). Protecting an already-open position from an adverse intraday move
+# (stop-loss/take-profit/near-expiration) is more time-sensitive than finding new entries, so this
+# job checks more often than the full pipeline does.
+#
+# GitHub Actions cron is best-effort and can be delayed by several minutes under load — this is
+# not a substitute for real-time risk monitoring, just a much tighter interval than the full cycle.
+
+on:
+  schedule:
+    # Every 5 minutes, 13:30-20:00 UTC (~9:30am-4:00pm US/Eastern during EDT), weekdays.
+    - cron: "*/5 13-20 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  check-exits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv and the Alpaca MCP server
+        run: |
+          pip install uv
+          uv tool install alpaca-mcp-server
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run exit management
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python multi_agent/exit_manager.py

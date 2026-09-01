@@ -1,0 +1,7 @@
+services:
+  multi-agent:
+    build:
+      context: .
+      dockerfile: multi_agent/Dockerfile
+    env_file:
+      - .env
