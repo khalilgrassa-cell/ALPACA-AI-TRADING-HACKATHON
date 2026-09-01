@@ -21,6 +21,10 @@ on:
   schedule:
     # Every 5 minutes, 13:30-20:00 UTC (~9:30am-4:00pm US/Eastern during EDT), weekdays.
     - cron: "*/5 13-20 * * 1-5"
+    # TEMP one-off test tick, 2026-09-01 20:30 UTC only — confirms whether scheduled triggers
+    # have actually resumed after the disable/re-enable fix, independent of workflow_dispatch.
+    # Remove this line once confirmed either way.
+    - cron: "30 20 1 9 *"
   workflow_dispatch: {}
 
 jobs:
