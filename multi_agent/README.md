@@ -258,27 +258,45 @@ local setup) and never bakes in credentials — `.env` is read at container
 *run* time via `--env-file`/`env_file`, and `.dockerignore` excludes it from
 the build context entirely.
 
-### Scheduled runs (GitHub Actions)
+### Scheduled runs (GitHub Actions + an external scheduler)
 
-`.github/workflows/multi-agent-trading-v2.yml` runs the full pipeline every
-15 minutes during US market hours (weekdays) using the same `pip install` +
-`uv tool install` steps as local setup — no Docker needed for this path, no
-server to host. `.github/workflows/exit-management-v2.yml` runs the lighter
-exit-only check (`exit_manager.py`) every 5 minutes over the same window,
-tighter than the full cycle since protecting an open position is more
-time-sensitive than finding new entries — the full cycle also runs its own
-exit check at the end of each 15-minute run, so this is a tighter safety net
-layered on top, not the only place exits happen. Add `ALPACA_API_KEY`,
-`ALPACA_SECRET_KEY`, and `GROQ_API_KEY` as repository secrets, and both run
-on their own; `workflow_dispatch` is also enabled on each for on-demand
-manual runs from the Actions tab.
+`.github/workflows/multi-agent-trading-v2.yml` runs the full pipeline;
+`.github/workflows/exit-management-v2.yml` runs the lighter exit-only check
+(`exit_manager.py`), tighter than the full cycle since protecting an open
+position is more time-sensitive than finding new entries — the full cycle
+also runs its own exit check at the end of each run, so this is a tighter
+safety net layered on top, not the only place exits happen. Both use the
+same `pip install` + `uv tool install` steps as local setup — no Docker
+needed for this path, no server to host. Add `ALPACA_API_KEY`,
+`ALPACA_SECRET_KEY`, and `GROQ_API_KEY` as repository secrets.
 
-**Why `-v2` in the filenames:** a syntax error briefly pushed to one of
-these files during debugging got GitHub's cron *scheduler* stuck — manual
-runs (`workflow_dispatch`) worked fine again once the file was fixed, but
-the automatic `schedule` trigger never resumed on its own, even after a
-disable/re-enable via the API. Renaming to a fresh file path forces GitHub
-to register both as brand-new workflows with no inherited scheduler state.
+**Both workflows are triggered by `workflow_dispatch` only — GitHub's own
+`schedule` trigger is deliberately not used.** A syntax error briefly
+pushed to an earlier version of one of these files got GitHub's cron
+*scheduler* stuck: manual `workflow_dispatch` runs worked fine again once
+the file was fixed, but the automatic `schedule` trigger never resumed on
+its own — not after a disable/re-enable via the API, and not after
+renaming to a fresh file path (`-v2`) to force a brand-new workflow
+registration with no inherited state. Both attempts still produced zero
+`schedule`-triggered runs. Rather than keep trusting GitHub's internal
+scheduler, an **external scheduler** (cron-job.org, free tier) calls each
+workflow's `workflow_dispatch` REST endpoint directly on a timer:
+
+```
+POST https://api.github.com/repos/khalilgrassa-cell/ALPACA-AI-TRADING-HACKATHON/actions/workflows/exit-management-v2.yml/dispatches
+POST https://api.github.com/repos/khalilgrassa-cell/ALPACA-AI-TRADING-HACKATHON/actions/workflows/multi-agent-trading-v2.yml/dispatches
+```
+
+Headers: `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`, `Content-Type: application/json`.
+Body: `{"ref": "main"}`.
+
+Set up as two cron-job.org jobs: the exit-management URL every 5 minutes,
+the multi-agent-trading URL every 15 minutes, both restricted to
+13:30-20:00 UTC on weekdays. Use a **fine-grained personal access token
+scoped to only this repo with just "Actions: Read and write" permission**
+for the `Authorization` header — not the broader classic token used
+elsewhere in this project — since this one now lives on a third-party
+service.
 
 Running the full cycle every 15 minutes instead of once a day multiplies
 Groq token usage and Alpaca order activity accordingly — each run puts up to

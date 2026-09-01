@@ -1,15 +1,11 @@
 name: Multi-Agent Trading Cycle
 
+# 2026-09-01: GitHub's own `schedule` trigger is NOT used here — see exit-management-v2.yml's
+# comment on this same date for why. An external scheduler (cron-job.org) calls this workflow's
+# `workflow_dispatch` endpoint every 15 minutes instead — see multi_agent/README.md's
+# "Scheduled runs" section for the exact request configuration.
+
 on:
-  schedule:
-    # Every 15 minutes, 13:30-20:00 UTC (~9:30am-4:00pm US/Eastern during EDT), weekdays —
-    # matches exit-management-v2.yml's window. GitHub Actions cron is best-effort and can be
-    # delayed by several minutes under load.
-    #
-    # 2026-09-01: see exit-management-v2.yml's comment on this same date — scheduled runs stopped
-    # firing after a syntax error was briefly pushed here too; disabled/re-enabled via the API,
-    # this commit is a second nudge. Confirm the next run shows event == "schedule".
-    - cron: "*/15 13-20 * * 1-5"
   workflow_dispatch: {}
 
 jobs:

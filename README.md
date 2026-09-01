@@ -117,10 +117,11 @@ docker run --rm --env-file .env alpaca-multi-agent
 ```
 
 `.github/workflows/multi-agent-trading-v2.yml` and `exit-management-v2.yml`
-run the pipeline on a cron schedule via GitHub Actions (repo secrets, no
-server to host) — see
-[`multi_agent/README.md`](multi_agent/README.md#scheduled-runs-github-actions)
-for the schedule and the reasoning behind it.
+run the pipeline on GitHub Actions (repo secrets, no server to host),
+triggered on a timer by an external scheduler rather than GitHub's own
+`schedule` trigger — see
+[`multi_agent/README.md`](multi_agent/README.md#scheduled-runs-github-actions--an-external-scheduler)
+for the exact setup and why.
 
 ## Safety
 

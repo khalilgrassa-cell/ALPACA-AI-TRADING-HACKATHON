@@ -7,20 +7,14 @@ name: Exit Management Cycle
 # (stop-loss/take-profit/near-expiration) is more time-sensitive than finding new entries, so this
 # job checks more often than the full pipeline does.
 #
-# GitHub Actions cron is best-effort and can be delayed by several minutes under load — this is
-# not a substitute for real-time risk monitoring, just a much tighter interval than the full cycle.
-#
-# 2026-09-01: scheduled runs stopped firing entirely after a since-fixed syntax error was briefly
-# pushed to this file — GitHub's cron registration for a workflow apparently doesn't self-heal
-# once it hits an unparseable file, even after the file becomes valid again. Disabled/re-enabled
-# via the API to force re-registration; this comment-only commit is a second nudge in case the
-# API toggle alone wasn't enough. Verify the next scheduled run actually appears with
-# event == "schedule" before trusting this is fixed.
+# 2026-09-01: GitHub's own `schedule` trigger is NOT used here — after a since-fixed syntax error
+# was briefly pushed to an earlier version of this file, GitHub's cron registration got stuck and
+# never resumed firing on its own, even across a disable/re-enable via the API and a rename to a
+# fresh file path (this file). Rather than keep trusting GitHub's internal scheduler, an external
+# scheduler (cron-job.org) calls this workflow's `workflow_dispatch` endpoint on a timer instead —
+# see multi_agent/README.md's "Scheduled runs" section for the exact request configuration.
 
 on:
-  schedule:
-    # Every 5 minutes, 13:30-20:00 UTC (~9:30am-4:00pm US/Eastern during EDT), weekdays.
-    - cron: "*/5 13-20 * * 1-5"
   workflow_dispatch: {}
 
 jobs:
