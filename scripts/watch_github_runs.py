@@ -15,7 +15,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -54,14 +54,15 @@ def save_seen(seen):
 
 
 def format_entry(run):
-    when = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    when = datetime.now().astimezone().isoformat(timespec="seconds")
+    triggered = datetime.fromisoformat(run["run_started_at"]).astimezone().isoformat(timespec="seconds")
     if run["status"] == "completed":
         state = f"finished — {run['conclusion']}"
     else:
         state = f"started — {run['status']}"
     return (
         f"[{when}] {run['name']} run #{run['run_number']} {state} "
-        f"(triggered {run['run_started_at']}) {run['html_url']}\n"
+        f"(triggered {triggered}) {run['html_url']}\n"
     )
 
 

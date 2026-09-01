@@ -9,3 +9,5 @@ backtest_chart.png
 multi_agent/logs/
 github_runs.log
 .github_watch_state.json
+strategy_choices.csv
+.strategy_log_state.json
