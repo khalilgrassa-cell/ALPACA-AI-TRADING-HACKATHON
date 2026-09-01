@@ -32,4 +32,9 @@ jobs:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          # Without this, Python fully buffers stdout in CI (no TTY) — if the run hangs or gets
+          # cancelled before its own end-of-script flush, every print() so far is lost with it,
+          # including any trade that may have already gone through. Unbuffered means every line
+          # lands in the log the instant it's printed, hang or not.
+          PYTHONUNBUFFERED: "1"
         run: python multi_agent/orchestrator.py
