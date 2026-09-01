@@ -56,5 +56,5 @@ def test_check_exit_rule_take_profit():
 
 def test_check_exit_rule_hold():
     exp = (date.today() + timedelta(days=10)).strftime("%y%m%d")
-    result = check_exit_rule.func({"symbol": f"QQQ{exp}C00731000", "unrealized_plpc": "0.10"})
+    result = check_exit_rule.func({"symbol": f"QQQ{exp}C00731000", "unrealized_plpc": "0.03"})
     assert result["reason"] is None

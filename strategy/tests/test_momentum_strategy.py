@@ -99,13 +99,13 @@ def test_exit_reason_stop_loss():
 
 def test_exit_reason_time_exit():
     exp = (date.today() + timedelta(days=1)).strftime("%y%m%d")
-    position = {"symbol": f"QQQ{exp}C00731000", "unrealized_plpc": "0.10"}
+    position = {"symbol": f"QQQ{exp}C00731000", "unrealized_plpc": "0.03"}
     assert exit_reason(position) == "TIME_EXIT"
 
 
 def test_exit_reason_hold():
     exp = (date.today() + timedelta(days=10)).strftime("%y%m%d")
-    position = {"symbol": f"QQQ{exp}C00731000", "unrealized_plpc": "0.10"}
+    position = {"symbol": f"QQQ{exp}C00731000", "unrealized_plpc": "0.03"}
     assert exit_reason(position) is None
 
 
