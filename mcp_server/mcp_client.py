@@ -14,10 +14,13 @@ CONFIG_PATH = Path(__file__).parent / "mcp_config.json"
 
 
 def _resolve_env(env_template):
+    """.strip() guards against a stray trailing newline/whitespace from copy-pasting a credential
+    into a GitHub Actions secret — observed live for GROQ_API_KEY (httpx rejected the malformed
+    header outright); the same paste habit could just as easily hit either Alpaca key."""
     resolved = {}
     for key, value in env_template.items():
         if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
-            resolved[key] = os.environ[value[2:-1]]
+            resolved[key] = os.environ[value[2:-1]].strip()
         else:
             resolved[key] = value
     return resolved

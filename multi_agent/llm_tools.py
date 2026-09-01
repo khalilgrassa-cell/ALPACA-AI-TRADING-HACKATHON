@@ -4,7 +4,7 @@ import json
 import os
 import time
 
-from groq import APIStatusError, BadRequestError, Groq, RateLimitError
+from groq import APIConnectionError, APIStatusError, BadRequestError, Groq, RateLimitError
 
 MODEL = "openai/gpt-oss-120b"
 
@@ -70,7 +70,10 @@ REQUEST_TIMEOUT_SECONDS = 60.0
 def get_client():
     global _client
     if _client is None:
-        _client = Groq(api_key=os.environ["GROQ_API_KEY"], timeout=REQUEST_TIMEOUT_SECONDS)
+        # .strip() guards against a stray trailing newline/whitespace from copy-pasting the key
+        # into a GitHub Actions secret — that alone makes httpx reject every request outright
+        # with "Illegal header value", instantly and with no retry helping (observed live).
+        _client = Groq(api_key=os.environ["GROQ_API_KEY"].strip(), timeout=REQUEST_TIMEOUT_SECONDS)
     return _client
 
 
@@ -147,7 +150,12 @@ def _create_completion_with_retry(client, **kwargs):
     """Retries on RateLimitError with backoff — a compounding multi-candidate cycle can exceed
     the per-minute token budget even after individual results are truncated. A 413 "request too
     large" for a single oversized message won't be helped by waiting, but a 429-style "you've used
-    this minute's budget" will — retrying either way is harmless since the request itself is small."""
+    this minute's budget" will — retrying either way is harmless since the request itself is small.
+
+    Also retries on APIConnectionError (DNS blip, TCP reset, TLS failure) — a transient network
+    hiccup shouldn't be indistinguishable from a hard failure. A malformed request that always
+    raises this (e.g. an invalid header value) will just exhaust the same retries and fall
+    through to the next model in _create_completion_with_fallback, same as a 429 would."""
     last_exc = None
     for attempt in range(MAX_RATE_LIMIT_RETRIES):
         try:
@@ -157,6 +165,9 @@ def _create_completion_with_retry(client, **kwargs):
             retry_after = getattr(exc, "response", None) and exc.response.headers.get("retry-after")
             delay = float(retry_after) if retry_after else 2 ** attempt * 5
             time.sleep(delay)
+        except APIConnectionError as exc:
+            last_exc = exc
+            time.sleep(2 ** attempt * 5)
     raise last_exc
 
 
@@ -185,6 +196,9 @@ def _create_completion_with_fallback(client, models, **kwargs):
         except RateLimitError as exc:
             last_exc = exc
             print(f"Model {model} is rate-limited even after retries — falling back to the next model.")
+        except APIConnectionError as exc:
+            last_exc = exc
+            print(f"Model {model}'s request kept failing to connect even after retries — falling back to the next model.")
         except APIStatusError as exc:
             if not _is_oversized_request_error(exc):
                 raise

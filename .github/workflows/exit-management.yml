@@ -35,38 +35,6 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: TEMP debug — check Groq connectivity via the actual Python client
-        env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-        run: |
-          pip install groq httpx >/dev/null
-          python3 -c "
-          import os, httpx, traceback
-          from groq import Groq
-
-          key = os.environ['GROQ_API_KEY']
-          print('key length:', len(key))
-          print('key repr (first/last 6 chars):', repr(key[:6]), repr(key[-6:]))
-          print('has whitespace/control chars:', any(c.isspace() or ord(c) < 32 for c in key))
-
-          print('--- default httpx (whatever family it picks) ---')
-          try:
-              c = Groq(api_key=key, timeout=15)
-              r = c.chat.completions.create(model='llama-3.3-70b-versatile', messages=[{'role':'user','content':'hi'}], max_tokens=5)
-              print('OK:', r.choices[0].message.content)
-          except Exception:
-              traceback.print_exc()
-
-          print('--- forced IPv4 (local_address=0.0.0.0) ---')
-          try:
-              http_client = httpx.Client(transport=httpx.HTTPTransport(local_address='0.0.0.0'))
-              c = Groq(api_key=key, timeout=15, http_client=http_client)
-              r = c.chat.completions.create(model='llama-3.3-70b-versatile', messages=[{'role':'user','content':'hi'}], max_tokens=5)
-              print('OK:', r.choices[0].message.content)
-          except Exception:
-              traceback.print_exc()
-          "
-
       - name: Run exit management
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
