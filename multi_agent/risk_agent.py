@@ -57,6 +57,7 @@ async def assess_risk(mcp_session, symbol, strategy, current_price, min_dte, max
         SYSTEM_PROMPT, user_prompt, mcp_session,
         mcp_tool_names={"get_account_info", "get_option_chain"},
         local_tools=[select_option_contract, sizing_tool],
+        required_keys={"strategy", "legs", "qty", "should_trade", "reasoning"},
     )
     return parse_json_response(text, required_keys={"strategy", "legs", "qty", "should_trade", "reasoning"})
 

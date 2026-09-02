@@ -42,6 +42,7 @@ async def submit_order(mcp_session, chosen_contract, qty, side="long"):
     text, _ = await run_agent(
         ORDER_SYSTEM_PROMPT, user_prompt, mcp_session,
         mcp_tool_names={"place_option_order"}, local_tools=[],
+        required_keys={"order_submitted", "order_result", "reasoning"},
     )
     return parse_json_response(text, required_keys={"order_submitted", "order_result", "reasoning"})
 
@@ -51,6 +52,7 @@ async def manage_exits(mcp_session, execute_exits=False):
     text, _ = await run_agent(
         EXIT_SYSTEM_PROMPT, user_prompt, mcp_session,
         mcp_tool_names={"get_all_positions", "close_position"}, local_tools=[check_exit_rule],
+        required_keys={"open_positions", "exits", "reasoning"},
     )
     return parse_json_response(text, required_keys={"open_positions", "exits", "reasoning"})
 

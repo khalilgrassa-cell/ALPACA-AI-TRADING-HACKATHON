@@ -57,7 +57,7 @@ async def choose_strategy(mcp_session, symbol, signal, sentiment, momentum_pct):
     )
     text, _ = await run_agent(
         SYSTEM_PROMPT, user_prompt, mcp_session,
-        mcp_tool_names=set(), local_tools=[],
+        mcp_tool_names=set(), local_tools=[], required_keys={"strategy", "reasoning"},
     )
     result = parse_json_response(text, required_keys={"strategy", "reasoning"})
     result["strategy"] = _clamp_strategy(signal, result.get("strategy"))

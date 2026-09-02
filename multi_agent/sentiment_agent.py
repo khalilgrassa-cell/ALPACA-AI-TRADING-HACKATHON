@@ -38,7 +38,7 @@ async def check_sentiment(mcp_session, symbol, signal):
     user_prompt = f"Scanning agent's signal for {symbol}: {signal}. Check recent news and confirm or veto it."
     text, _ = await run_agent(
         SYSTEM_PROMPT, user_prompt, mcp_session,
-        mcp_tool_names={"get_news"}, local_tools=[],
+        mcp_tool_names={"get_news"}, local_tools=[], required_keys={"sentiment", "signal", "reasoning"},
     )
     result = parse_json_response(text, required_keys={"sentiment", "signal", "reasoning"})
     result["signal"] = _clamp_signal(signal, result.get("signal"))

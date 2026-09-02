@@ -257,7 +257,7 @@ def _recover_final_answer_from_tool_use_failure(exc):
         return None
 
 
-async def run_agent(system_prompt, user_prompt, mcp_session, mcp_tool_names, local_tools=None, max_turns=8, models=None):
+async def run_agent(system_prompt, user_prompt, mcp_session, mcp_tool_names, local_tools=None, max_turns=8, models=None, required_keys=None):
     """Runs one Groq-hosted model to completion (a manual tool-use loop) against a subset of the
     MCP server's tools plus any local_tools, returning (final_text, full_message_history)."""
     local_tools = local_tools or []
@@ -306,6 +306,32 @@ async def run_agent(system_prompt, user_prompt, mcp_session, mcp_tool_names, loc
                             "(no tool call, no content) for this turn."
                         )
                     continue
+                if required_keys:
+                    # Observed live: a model can call submit_final_answer with technically valid
+                    # but semantically empty JSON (e.g. "{}") — passes as a response, but is
+                    # missing every field the caller actually needs. Validate here, before
+                    # accepting this turn, so an unusable final answer gets the same
+                    # drop-this-model-and-retry treatment as an empty response, rather than
+                    # surfacing as a confusing "missing expected key(s)" error two frames upstream
+                    # with no chance for the fallback chain to recover.
+                    final_call = next(
+                        (tc for tc in (message.tool_calls or []) if tc.function.name == FINAL_ANSWER_TOOL_NAME), None,
+                    )
+                    candidate_answer = (
+                        final_call.function.arguments if final_call is not None
+                        else message.content if not message.tool_calls else None
+                    )
+                    if candidate_answer is not None:
+                        try:
+                            parse_json_response(candidate_answer, required_keys)
+                        except ValueError:
+                            remaining_models = [m for m in remaining_models if m != used_model]
+                            if not remaining_models:
+                                raise RuntimeError(
+                                    f"Every model in the fallback chain returned a final answer "
+                                    f"missing required key(s) {required_keys}."
+                                )
+                            continue
                 break
             except asyncio.TimeoutError:
                 raise RuntimeError(f"Groq completion call did not return within {call_timeout}s")

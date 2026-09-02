@@ -483,6 +483,52 @@ def test_run_agent_raises_when_every_model_returns_an_empty_response():
             assert "empty response" in str(exc)
 
 
+def test_run_agent_falls_back_to_next_model_when_final_answer_is_missing_required_keys():
+    # Reproduces a real live failure: a model called submit_final_answer with technically valid
+    # but semantically empty JSON ("{}") — passes as a normal response (no exception), but is
+    # missing every field the caller actually needs (e.g. risk_agent's strategy/legs/qty/
+    # should_trade/reasoning). Previously this surfaced as a confusing "missing expected key(s)"
+    # ValueError from parse_json_response with no chance for the fallback chain to recover.
+    mcp_session = MagicMock()
+    mcp_session.list_tools = AsyncMock(return_value=SimpleNamespace(tools=[]))
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = MagicMock(side_effect=[
+        chat_response(tool_calls=[tool_call(llm_tools.FINAL_ANSWER_TOOL_NAME, {})]),  # model-a: empty answer
+        chat_response(tool_calls=[tool_call(llm_tools.FINAL_ANSWER_TOOL_NAME, {"ok": True})]),  # model-b: valid
+    ])
+
+    with patch.object(llm_tools, "get_client", return_value=fake_client):
+        text, messages = asyncio.run(run_agent(
+            "system", "user", mcp_session, mcp_tool_names=set(), local_tools=[],
+            models=["model-a", "model-b"], required_keys={"ok"},
+        ))
+
+    assert json.loads(text) == {"ok": True}
+    calls = fake_client.chat.completions.create.call_args_list
+    assert [c.kwargs["model"] for c in calls] == ["model-a", "model-b"]
+
+
+def test_run_agent_raises_when_every_model_returns_a_final_answer_missing_required_keys():
+    mcp_session = MagicMock()
+    mcp_session.list_tools = AsyncMock(return_value=SimpleNamespace(tools=[]))
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = MagicMock(
+        return_value=chat_response(tool_calls=[tool_call(llm_tools.FINAL_ANSWER_TOOL_NAME, {})])
+    )
+
+    with patch.object(llm_tools, "get_client", return_value=fake_client):
+        try:
+            asyncio.run(run_agent(
+                "system", "user", mcp_session, mcp_tool_names=set(), local_tools=[],
+                models=["model-a", "model-b"], required_keys={"ok"},
+            ))
+            assert False, "expected RuntimeError"
+        except RuntimeError as exc:
+            assert "missing required key" in str(exc)
+
+
 def test_get_client_strips_whitespace_from_api_key(monkeypatch):
     # Reproduces a real live failure: a trailing newline copy-pasted into the GROQ_API_KEY
     # GitHub Actions secret made httpx reject every request outright as an illegal header value,
