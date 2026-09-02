@@ -34,6 +34,16 @@ MODELS = [
 MAX_TOOL_RESULT_CHARS = 2500
 MAX_RATE_LIMIT_RETRIES = 3
 
+# 2026-09-02: observed live — a model near the front of MODELS (hit far more often than the
+# others, since every call tries models in the same fixed order) occasionally returns a 429 whose
+# retry-after header reflects its own per-minute reset window (tens of seconds), not how long a
+# healthy fallback model would take to just try next. Retrying that one model 3 times against its
+# own retry-after could alone burn most of CALL_TIMEOUT_SECONDS_PER_MODEL's total budget before
+# _create_completion_with_fallback ever reaches a model with headroom — this cap keeps a single
+# model's own retries cheap so the fallback chain actually gets used instead of stalling on the
+# first model whose limited budget is exhausted.
+MAX_RETRY_DELAY_SECONDS = 10.0
+
 # Backstop above the client's own REQUEST_TIMEOUT_SECONDS. A degraded connection can trickle
 # occasional bytes and keep resetting httpx's per-read timeout without ever tripping it — observed
 # live: a call hung 20+ minutes past the client's nominal 60s timeout with no exception raised.
@@ -168,10 +178,10 @@ def _create_completion_with_retry(client, **kwargs):
             last_exc = exc
             retry_after = getattr(exc, "response", None) and exc.response.headers.get("retry-after")
             delay = float(retry_after) if retry_after else 2 ** attempt * 5
-            time.sleep(delay)
+            time.sleep(min(delay, MAX_RETRY_DELAY_SECONDS))
         except APIConnectionError as exc:
             last_exc = exc
-            time.sleep(2 ** attempt * 5)
+            time.sleep(min(2 ** attempt * 5, MAX_RETRY_DELAY_SECONDS))
     raise last_exc
 
 

@@ -258,6 +258,32 @@ def test_run_agent_falls_back_to_next_model_when_first_is_rate_limited():
     assert [c.kwargs["model"] for c in calls] == ["model-a"] * llm_tools.MAX_RATE_LIMIT_RETRIES + ["model-b"]
 
 
+def rate_limit_error_with_long_retry_after(seconds):
+    response = httpx.Response(429, headers={"retry-after": str(seconds)}, request=httpx.Request("POST", "https://api.groq.com/"))
+    return RateLimitError("rate limited", response=response, body={"error": {"message": "rate limited"}})
+
+
+def test_create_completion_with_retry_caps_a_large_retry_after_delay():
+    # Reproduces a real live failure: a model near the front of MODELS gets hit far more often
+    # than the rest (every call tries models in the same fixed order), so it occasionally returns
+    # a 429 whose retry-after reflects its own per-minute reset window — tens of seconds. Retrying
+    # that one model MAX_RATE_LIMIT_RETRIES times against the raw retry-after value could alone
+    # burn most of the whole call's watchdog budget before a healthy fallback model is ever tried.
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = MagicMock(side_effect=[
+        rate_limit_error_with_long_retry_after(120),
+        rate_limit_error_with_long_retry_after(120),
+        chat_response(content='{"ok": true}'),
+    ])
+
+    sleep_calls = []
+    with patch.object(llm_tools.time, "sleep", side_effect=lambda s: sleep_calls.append(s)):
+        result = llm_tools._create_completion_with_retry(fake_client, model="model-a")
+
+    assert result.choices[0].message.content == '{"ok": true}'
+    assert sleep_calls == [llm_tools.MAX_RETRY_DELAY_SECONDS, llm_tools.MAX_RETRY_DELAY_SECONDS]
+
+
 def test_run_agent_raises_after_max_turns():
     mcp_session = MagicMock()
     mcp_session.list_tools = AsyncMock(return_value=SimpleNamespace(tools=[]))
