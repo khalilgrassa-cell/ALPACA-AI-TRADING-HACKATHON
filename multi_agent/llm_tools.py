@@ -31,7 +31,14 @@ MODELS = [
 # that alone, on top of the tool schemas resent every turn. Keep everything lean: short tool
 # results, trimmed schema descriptions (see mcp_tool_to_tool_schema), and a modest max_tokens on
 # the completion itself (short JSON answers don't need much).
-MAX_TOOL_RESULT_CHARS = 2500
+MAX_TOOL_RESULT_CHARS = 1500
+# 2026-09-02: observed live — every Risk Agent call was hitting a genuine 413 "Request too large"
+# on every model (all four share the same 8000 TPM cap), 197-877 tokens over the limit. Not
+# rate-limit contention — a real, deterministic size violation: get_option_chain alone can return
+# ~60,000 raw characters before truncation, and the Risk Agent's tool schemas (get_option_chain +
+# select_option_contract + calculate_position_size/calculate_combo_position_size) add ~1,300-1,400
+# tokens on top, resent every turn. Lowered from 2500 to give real headroom instead of hovering
+# right at the boundary.
 MAX_RATE_LIMIT_RETRIES = 3
 
 # 2026-09-02: observed live — a model near the front of MODELS (hit far more often than the
