@@ -17,9 +17,13 @@ MODEL = "openai/gpt-oss-120b"
 MODELS = [
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
-    "llama-3.3-70b-versatile",
-    "moonshotai/kimi-k2-instruct",
+    "qwen/qwen3.6-27b",
+    "qwen/qwen3.8-27b",
 ]
+# 2026-09-02: llama-3.3-70b-versatile and moonshotai/kimi-k2-instruct were removed from Groq's
+# lineup for this account (both now 404 model_not_found) — replaced with qwen/qwen3.6-27b and
+# qwen/qwen3.8-27b, verified live to support tool-calling. Re-check client.models.list() if
+# fallback models start failing again; Groq's available model set isn't static.
 
 # This Groq account's on-demand tier has an 8000 tokens-per-minute cap — true for every
 # tool-calling-capable model we tested, not just this one. A single tool result (e.g. get_news

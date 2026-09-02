@@ -196,8 +196,10 @@ BUY_PUT directional win rate (5d fwd return < 0): 43.6% | avg captured move: -0.
 
 Each agent call tries `llm_tools.MODELS` in order — several tool-calling-
 capable Groq models (`openai/gpt-oss-120b`, `openai/gpt-oss-20b`,
-`llama-3.3-70b-versatile`, `moonshotai/kimi-k2-instruct` as of this writing)
-under the same `GROQ_API_KEY`. Groq's on-demand tier caps tokens-per-minute
+`qwen/qwen3.6-27b`, `qwen/qwen3.8-27b` as of this writing — Groq's available
+model set isn't static; two earlier entries in this list were silently
+deprecated and had to be swapped out) under the same `GROQ_API_KEY`. Groq's
+on-demand tier caps tokens-per-minute
 per model, so once a model's own retries (`MAX_RATE_LIMIT_RETRIES`) are
 exhausted — or a single request is already too large for that model's
 per-minute budget by itself (Groq returns that as a 413, not a 429; see
