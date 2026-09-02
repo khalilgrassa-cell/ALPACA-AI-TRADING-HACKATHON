@@ -435,6 +435,54 @@ def test_run_agent_reraises_bad_request_errors_that_arent_tool_use_hallucination
             pass
 
 
+def test_run_agent_falls_back_to_next_model_when_a_model_returns_an_empty_response():
+    # Reproduces a real live failure: after cascading through several rate-limited models, one
+    # model in the fallback chain occasionally returns successfully (no exception) but with
+    # neither a tool call nor any text content — an unusable "empty" turn. Previously this got
+    # accepted as the final answer (`message.content or ""`), which then crashed
+    # parse_json_response three call frames downstream with an opaque "Expecting value: line 1
+    # column 1" JSON error. It should instead be treated like a failed model and retried with
+    # whatever's left in the fallback chain.
+    mcp_session = MagicMock()
+    mcp_session.list_tools = AsyncMock(return_value=SimpleNamespace(tools=[]))
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = MagicMock(side_effect=[
+        chat_response(content=None, tool_calls=None),  # model-a: empty, unusable turn
+        chat_response(content='{"ok": true}'),  # model-b: succeeds
+    ])
+
+    with patch.object(llm_tools, "get_client", return_value=fake_client):
+        text, messages = asyncio.run(run_agent(
+            "system", "user", mcp_session, mcp_tool_names=set(), local_tools=[],
+            models=["model-a", "model-b"],
+        ))
+
+    assert text == '{"ok": true}'
+    calls = fake_client.chat.completions.create.call_args_list
+    assert [c.kwargs["model"] for c in calls] == ["model-a", "model-b"]
+
+
+def test_run_agent_raises_when_every_model_returns_an_empty_response():
+    mcp_session = MagicMock()
+    mcp_session.list_tools = AsyncMock(return_value=SimpleNamespace(tools=[]))
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = MagicMock(
+        return_value=chat_response(content=None, tool_calls=None)
+    )
+
+    with patch.object(llm_tools, "get_client", return_value=fake_client):
+        try:
+            asyncio.run(run_agent(
+                "system", "user", mcp_session, mcp_tool_names=set(), local_tools=[],
+                models=["model-a", "model-b"],
+            ))
+            assert False, "expected RuntimeError"
+        except RuntimeError as exc:
+            assert "empty response" in str(exc)
+
+
 def test_get_client_strips_whitespace_from_api_key(monkeypatch):
     # Reproduces a real live failure: a trailing newline copy-pasted into the GROQ_API_KEY
     # GitHub Actions secret made httpx reject every request outright as an illegal header value,

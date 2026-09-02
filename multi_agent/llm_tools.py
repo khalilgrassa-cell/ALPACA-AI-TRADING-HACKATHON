@@ -277,7 +277,7 @@ async def run_agent(system_prompt, user_prompt, mcp_session, mcp_tool_names, loc
         remaining_models = models
         while True:
             try:
-                response, _ = await asyncio.wait_for(
+                response, used_model = await asyncio.wait_for(
                     asyncio.to_thread(
                         _create_completion_with_fallback,
                         client, remaining_models, messages=messages, max_tokens=1024,
@@ -285,6 +285,20 @@ async def run_agent(system_prompt, user_prompt, mcp_session, mcp_tool_names, loc
                     ),
                     timeout=call_timeout,
                 )
+                message = response.choices[0].message
+                if not message.tool_calls and not (message.content and message.content.strip()):
+                    # Observed live: a model can return successfully (no exception raised) with
+                    # neither a tool call nor any text — an unusable empty turn, not a real final
+                    # answer. Treat it the same as a failed model rather than letting an empty
+                    # string get accepted as the "final answer" and crash parse_json_response with
+                    # an opaque "Expecting value: line 1 column 1" three call frames downstream.
+                    remaining_models = [m for m in remaining_models if m != used_model]
+                    if not remaining_models:
+                        raise RuntimeError(
+                            "Every model in the fallback chain returned an empty response "
+                            "(no tool call, no content) for this turn."
+                        )
+                    continue
                 break
             except asyncio.TimeoutError:
                 raise RuntimeError(f"Groq completion call did not return within {call_timeout}s")
@@ -299,7 +313,6 @@ async def run_agent(system_prompt, user_prompt, mcp_session, mcp_tool_names, loc
                 remaining_models = [m for m in remaining_models if m != failed_model]
                 if failed_model is None or not remaining_models:
                     raise
-        message = response.choices[0].message
         messages.append({
             "role": "assistant",
             "content": message.content,
