@@ -41,6 +41,10 @@ jobs:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          # A dedicated key so this every-5-minutes cycle doesn't share a per-model rate-limit
+          # bucket with the every-30-minutes full trading cycle — see exit_manager.py's comment.
+          # Optional: falls back to GROQ_API_KEY above until this secret is added.
+          GROQ_API_KEY_EXITS: ${{ secrets.GROQ_API_KEY_EXITS }}
           # See multi-agent-trading-v2.yml's comment on this — same reasoning applies here.
           PYTHONUNBUFFERED: "1"
         run: python multi_agent/exit_manager.py

@@ -272,6 +272,19 @@ same `pip install` + `uv tool install` steps as local setup — no Docker
 needed for this path, no server to host. Add `ALPACA_API_KEY`,
 `ALPACA_SECRET_KEY`, and `GROQ_API_KEY` as repository secrets.
 
+**`exit-management-v2.yml` also reads an optional `GROQ_API_KEY_EXITS`
+secret.** 2026-09-03: sharing one `GROQ_API_KEY` between this every-5-minutes
+cycle and the every-30-minutes full trading cycle meant both drew against the
+same per-model Groq rate-limit bucket — observed live, Exit Management's
+traffic alone kept `openai/gpt-oss-120b` (first in `MODELS`, hit on every
+single turn) permanently exhausted, forcing every turn of every agent in the
+full cycle to pay out its full retry-then-fallback delay before reaching a
+model with headroom, which inflated a cycle's runtime well past its own
+30-minute schedule and caused overlapping runs. Add a second Groq API key as
+`GROQ_API_KEY_EXITS` to isolate the two schedules' budgets from each other
+(`exit_manager.py` prefers it when set, falling back to `GROQ_API_KEY`
+otherwise — so this is optional, not a breaking change).
+
 **Both workflows are triggered by `workflow_dispatch` only — GitHub's own
 `schedule` trigger is deliberately not used.** A syntax error briefly
 pushed to an earlier version of one of these files got GitHub's cron
