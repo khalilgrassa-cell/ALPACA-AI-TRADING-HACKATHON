@@ -13,9 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     # 2026-09-03: observed live — a run hung for 46+ minutes with no error, well past every
     # legitimate run's duration (normally under a minute; the worst real contention-driven case
-    # seen was 30 minutes, before the GROQ_API_KEY_EXITS split reduced that). GitHub's own default
-    # job timeout is 6 hours, which is not a backstop — this caps a genuine hang at a bounded cost
-    # instead of it silently occupying a scheduled slot indefinitely.
+    # seen was 30 minutes). GitHub's own default job timeout is 6 hours, which is not a backstop —
+    # this caps a genuine hang at a bounded cost instead of it silently occupying a scheduled slot
+    # indefinitely.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -38,6 +38,11 @@ jobs:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          # 2026-09-03: a genuinely separate Groq account (not just a second key on the primary
+          # one -- see llm_tools.get_secondary_client's docstring), tried only once every model on
+          # the primary account is exhausted for a turn. Optional: falls back to primary-only
+          # behavior if this secret isn't set.
+          GROQ_API_KEY_EXITS: ${{ secrets.GROQ_API_KEY_EXITS }}
           # Without this, Python fully buffers stdout in CI (no TTY) — if the run hangs or gets
           # cancelled before its own end-of-script flush, every print() so far is lost with it,
           # including any trade that may have already gone through. Unbuffered means every line

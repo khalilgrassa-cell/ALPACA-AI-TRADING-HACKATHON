@@ -540,3 +540,64 @@ def test_get_client_strips_whitespace_from_api_key(monkeypatch):
         llm_tools.get_client()
 
     assert fake_groq_cls.call_args.kwargs["api_key"] == "gsk_test_key"
+
+
+def test_get_secondary_client_returns_none_when_not_configured(monkeypatch):
+    monkeypatch.setattr(llm_tools, "_secondary_client", None)
+    monkeypatch.delenv("GROQ_API_KEY_EXITS", raising=False)
+
+    assert llm_tools.get_secondary_client() is None
+
+
+def test_get_secondary_client_strips_whitespace_from_api_key(monkeypatch):
+    monkeypatch.setattr(llm_tools, "_secondary_client", None)
+    monkeypatch.setenv("GROQ_API_KEY_EXITS", "  gsk_second_account\n")
+
+    with patch.object(llm_tools, "Groq") as fake_groq_cls:
+        llm_tools.get_secondary_client()
+
+    assert fake_groq_cls.call_args.kwargs["api_key"] == "gsk_second_account"
+
+
+def test_run_agent_falls_back_to_secondary_account_when_primary_is_fully_exhausted(monkeypatch):
+    # Reproduces a real live failure: every model in the primary account's fallback chain hit a
+    # hard, non-retryable rate limit (observed live as a 429 "tokens per day" cap, not the usual
+    # per-minute one) in the same turn. A second Groq *account* (not just a second key on the same
+    # one — see get_secondary_client's docstring) has its own separate budget to fall back to.
+    mcp_session = MagicMock()
+    mcp_session.list_tools = AsyncMock(return_value=SimpleNamespace(tools=[]))
+
+    primary_client = MagicMock()
+    primary_client.chat.completions.create = MagicMock(side_effect=[
+        *([rate_limit_error()] * llm_tools.MAX_RATE_LIMIT_RETRIES),  # model-a on primary
+        *([rate_limit_error()] * llm_tools.MAX_RATE_LIMIT_RETRIES),  # model-b on primary
+    ])
+    secondary_client = MagicMock()
+    secondary_client.chat.completions.create = MagicMock(return_value=chat_response(content='{"ok": true}'))
+
+    with patch.object(llm_tools, "get_client", return_value=primary_client), \
+         patch.object(llm_tools, "get_secondary_client", return_value=secondary_client):
+        text, messages = asyncio.run(run_agent(
+            "system", "user", mcp_session, mcp_tool_names=set(), local_tools=[],
+            models=["model-a", "model-b"],
+        ))
+
+    assert text == '{"ok": true}'
+    assert primary_client.chat.completions.create.call_count == 2 * llm_tools.MAX_RATE_LIMIT_RETRIES
+    # The secondary account gets the *same* model list from the top, not picking up where the
+    # primary left off — it has its own untouched budget, so there's no reason to skip model-a.
+    assert secondary_client.chat.completions.create.call_args.kwargs["model"] == "model-a"
+
+
+def test_run_agent_never_touches_secondary_account_when_not_configured():
+    mcp_session = MagicMock()
+    mcp_session.list_tools = AsyncMock(return_value=SimpleNamespace(tools=[]))
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = MagicMock(return_value=chat_response(content='{"ok": true}'))
+
+    with patch.object(llm_tools, "get_client", return_value=fake_client), \
+         patch.object(llm_tools, "get_secondary_client", return_value=None) as fake_get_secondary:
+        asyncio.run(run_agent("system", "user", mcp_session, mcp_tool_names=set(), local_tools=[]))
+
+    fake_get_secondary.assert_called_once()

@@ -207,16 +207,21 @@ Each agent call tries `llm_tools.MODELS` in order — several tool-calling-
 capable Groq models (`openai/gpt-oss-120b`, `openai/gpt-oss-20b`,
 `qwen/qwen3.6-27b`, `qwen/qwen3.8-27b` as of this writing — Groq's available
 model set isn't static; two earlier entries in this list were silently
-deprecated and had to be swapped out) under the same `GROQ_API_KEY`. Groq's
-on-demand tier caps tokens-per-minute
-per model, so once a model's own retries (`MAX_RATE_LIMIT_RETRIES`) are
-exhausted — or a single request is already too large for that model's
-per-minute budget by itself (Groq returns that as a 413, not a 429; see
-`_is_oversized_request_error`) — `_create_completion_with_fallback` moves to
-the next model in the list rather than failing the whole agent call. The
-watchdog around each turn (`CALL_TIMEOUT_SECONDS_PER_MODEL` in
-`run_agent`) scales with the number of models being tried, since a single
-call can now walk the whole fallback chain.
+deprecated and had to be swapped out) under `GROQ_API_KEY`. Groq's on-demand
+tier caps both tokens-per-minute (TPM) and tokens-per-day (TPD) per model —
+observed live, TPD is real and can bind even when TPM headroom looks fine,
+on a heavy-usage day. Once a model's own retries (`MAX_RATE_LIMIT_RETRIES`)
+are exhausted, or a request is already too large for a per-minute budget by
+itself (Groq returns that as a 413, not a 429; see
+`_is_oversized_request_error`), `_create_completion_with_fallback` moves to
+the next model in the list — and once every model on the primary account
+is exhausted, to the same model list again on a second Groq *account* if
+`GROQ_API_KEY_EXITS` is set (see `llm_tools.get_secondary_client` and the
+"Scheduled runs" section below for why this needs a different account, not
+just a second key on the same one). The watchdog around each turn
+(`CALL_TIMEOUT_SECONDS_PER_MODEL` in `run_agent`) scales with the number of
+models times the number of accounts being tried, since a single call can
+now walk the whole fallback chain on every account in turn.
 
 `TOP_N_HOTTEST` (currently 3 — lowered from 5 on 2026-09-03 after live evidence
 that Groq's per-model rate limits are enforced org-wide, not per API key, so a
@@ -288,25 +293,27 @@ same `pip install` + `uv tool install` steps as local setup — no Docker
 needed for this path, no server to host. Add `ALPACA_API_KEY`,
 `ALPACA_SECRET_KEY`, and `GROQ_API_KEY` as repository secrets.
 
-**`exit-management-v2.yml` also reads an optional `GROQ_API_KEY_EXITS`
-secret — though this turned out not to actually help; see below.**
-2026-09-03: sharing one `GROQ_API_KEY` between this cycle and the full
-trading cycle meant both drew against the same per-model Groq rate-limit
-bucket — observed live, Exit Management's traffic running concurrently with
-a long Trading Cycle run kept `openai/gpt-oss-120b` (first in `MODELS`, hit
-on every single turn) exhausted, forcing every turn of every agent in the
-full cycle to pay out its full retry-then-fallback delay before reaching a
-model with headroom, which inflated a cycle's runtime well past its own
-schedule and caused overlapping runs. A second Groq API key
-(`GROQ_API_KEY_EXITS`, `exit_manager.py` prefers it when set) was added to
-try to isolate the two schedules' budgets from each other — **confirmed live
-not to work**: Groq enforces its per-model rate limits at the organization
-level, not per API key, so a second key draws on the exact same shared
-budget regardless of which one authenticates the request. Left wired since
-it's harmless and optional (falls back to `GROQ_API_KEY` if unset), but the
-real mitigations that followed are this cycle's widened interval (5 -> 15
-minutes) and a lower `TOP_N_HOTTEST` on the trading cycle's own side (see
-"Model & cost" above).
+**`multi-agent-trading-v2.yml` also reads an optional `GROQ_API_KEY_EXITS`
+secret — a genuinely separate Groq account, used as pipeline-wide overflow
+capacity.** 2026-09-03: this secret was originally added to give
+exit-management its own key, isolated from the full trading cycle's — but
+sharing GROQ_API_KEY between them was never really the mechanism worth
+isolating; a single Trading Cycle run's own candidate loop was independently
+shown to exhaust every model in `MODELS` on its own, including hitting a
+hard per-model *tokens-per-day* cap (not just the usual per-minute one),
+which no key-per-workflow split addresses. A key generated *inside the same
+Groq account* shares that account's identical TPM/TPD budget regardless of
+which key authenticates the request — confirmed live, that specific
+approach adds nothing. A genuinely *different* Groq account (a separate
+signup, which is what this secret now holds) has its own separate budget,
+though: `llm_tools.get_secondary_client()` reads it and
+`_create_completion_with_fallback` reaches it only once every model on the
+primary account is exhausted for a turn — real overflow capacity for
+Sentiment/Strategy, tried from whichever entry point calls `run_agent`.
+`exit_manager.py` doesn't read this secret at all anymore: its whole call
+chain (Trading Agent, Market Conditions) became fully deterministic (see
+the pipeline stages table above), so it has no LLM calls left to fall back
+on in the first place.
 
 **Both workflows are triggered by `workflow_dispatch` only — GitHub's own
 `schedule` trigger is deliberately not used.** A syntax error briefly
@@ -329,8 +336,10 @@ Headers: `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`,
 Body: `{"ref": "main"}`.
 
 Set up as two cron-job.org jobs: the exit-management URL every 10 minutes
-(widened from 5 on 2026-09-03 — see the `GROQ_API_KEY_EXITS` note above),
-the multi-agent-trading URL every 30 minutes, both restricted to
+(widened from 5 on 2026-09-03 to reduce contention while Exit Management was
+still LLM-backed -- moot today since it has no LLM calls left at all, but
+the interval itself is unchanged since then), the multi-agent-trading URL
+every 30 minutes, both restricted to
 13:30-20:00 UTC on weekdays. Use a **fine-grained personal access token
 scoped to only this repo with just "Actions: Read and write" permission**
 for the `Authorization` header — not the broader classic token used

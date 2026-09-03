@@ -79,6 +79,7 @@ FINAL_ANSWER_TOOL = {
 }
 
 _client = None
+_secondary_client = None
 
 # The Groq client is synchronous — its network call would otherwise block run_agent's whole
 # event loop for however long the connection takes to respond, with no way for an outer
@@ -96,6 +97,26 @@ def get_client():
         # with "Illegal header value", instantly and with no retry helping (observed live).
         _client = Groq(api_key=os.environ["GROQ_API_KEY"].strip(), timeout=REQUEST_TIMEOUT_SECONDS)
     return _client
+
+
+def get_secondary_client():
+    """An optional second Groq account -- not just a second key on the primary account. Confirmed
+    live 2026-09-03: Groq enforces both its per-minute (TPM) and per-day (TPD) limits at the
+    *organization* level, not per API key, so a second key issued under the same account shares
+    the identical budget and adds no real headroom (this was GROQ_API_KEY_EXITS's original,
+    ineffective purpose: isolating exit-management's usage from the trading cycle's, when both
+    were really the same account's shared budget either way). A genuinely separate account has
+    its own org ID and therefore its own separate TPM/TPD pools -- reusing the same secret name
+    here because it now holds a real second account's key, repurposed as pipeline-wide overflow
+    capacity: _create_completion_with_fallback only reaches it once every model in the primary
+    account's own MODELS list is exhausted for a turn. Returns None if not configured (optional)."""
+    global _secondary_client
+    key = os.environ.get("GROQ_API_KEY_EXITS")
+    if not key:
+        return None
+    if _secondary_client is None:
+        _secondary_client = Groq(api_key=key.strip(), timeout=REQUEST_TIMEOUT_SECONDS)
+    return _secondary_client
 
 
 MAX_SCHEMA_DESCRIPTION_CHARS = 150
@@ -205,36 +226,42 @@ def _is_oversized_request_error(exc):
     return isinstance(exc, APIStatusError) and isinstance(body, dict) and body.get("error", {}).get("code") == "rate_limit_exceeded"
 
 
-def _create_completion_with_fallback(client, models, **kwargs):
-    """Tries each model in order, moving on once a model's own MAX_RATE_LIMIT_RETRIES are
-    exhausted (a 429) or a single request is already too large for that model's per-minute budget
-    (a 413 — see _is_oversized_request_error) — see MODELS above for why a same-account, same-key
-    model swap helps. Raises the last model's error only if every model in the list still fails."""
+def _create_completion_with_fallback(clients, models, **kwargs):
+    """Tries every model against the first (primary) account before ever moving on to the next
+    account -- clients is [(label, Groq client), ...], usually just the primary account, plus a
+    secondary one when get_secondary_client() finds GROQ_API_KEY_EXITS configured. Within one
+    account, moves to the next model once a model's own MAX_RATE_LIMIT_RETRIES are exhausted (a
+    429) or a single request is already too large for that model's per-minute budget (a 413 —
+    see _is_oversized_request_error); see MODELS above for why a same-account model swap helps at
+    all, and get_secondary_client's docstring for why a second *account* helps further than a
+    second key on the same one does. Raises the last error only once every model has failed on
+    every account."""
     last_exc = None
-    for model in models:
-        try:
-            return _create_completion_with_retry(client, model=model, **kwargs), model
-        except RateLimitError as exc:
-            last_exc = exc
-            print(f"Model {model} is rate-limited even after retries — falling back to the next model.")
-        except APIConnectionError as exc:
-            last_exc = exc
-            print(f"Model {model}'s request kept failing to connect even after retries — falling back to the next model.")
-        except BadRequestError as exc:
-            # Must come before the APIStatusError clause below — BadRequestError is a subclass of
-            # it, so listing them in this order is what lets this one run first. Tags which model
-            # actually produced the malformed generation, so a caller that can't recover a usable
-            # answer from it (see _recover_final_answer_from_tool_use_failure) can retry with that
-            # one model excluded instead of aborting outright — reasoning models occasionally emit
-            # prose instead of a parseable tool call/JSON (observed live: Groq's own
-            # "output_parse_failed"), and a different model in the list often just works.
-            exc.failed_model = model
-            raise
-        except APIStatusError as exc:
-            if not _is_oversized_request_error(exc):
+    for label, client in clients:
+        for model in models:
+            try:
+                return _create_completion_with_retry(client, model=model, **kwargs), model
+            except RateLimitError as exc:
+                last_exc = exc
+                print(f"[{label}] Model {model} is rate-limited even after retries — falling back to the next model.")
+            except APIConnectionError as exc:
+                last_exc = exc
+                print(f"[{label}] Model {model}'s request kept failing to connect even after retries — falling back to the next model.")
+            except BadRequestError as exc:
+                # Must come before the APIStatusError clause below — BadRequestError is a subclass
+                # of it, so listing them in this order is what lets this one run first. Tags which
+                # model actually produced the malformed generation, so a caller that can't recover
+                # a usable answer from it (see _recover_final_answer_from_tool_use_failure) can
+                # retry with that one model excluded instead of aborting outright — reasoning
+                # models occasionally emit prose instead of a parseable tool call/JSON (observed
+                # live: Groq's own "output_parse_failed"), and a different model often just works.
+                exc.failed_model = model
                 raise
-            last_exc = exc
-            print(f"Model {model}'s request exceeded its per-minute token budget — falling back to the next model.")
+            except APIStatusError as exc:
+                if not _is_oversized_request_error(exc):
+                    raise
+                last_exc = exc
+                print(f"[{label}] Model {model}'s request exceeded its per-minute token budget — falling back to the next model.")
     raise last_exc
 
 
@@ -259,7 +286,10 @@ def _recover_final_answer_from_tool_use_failure(exc):
 
 async def run_agent(system_prompt, user_prompt, mcp_session, mcp_tool_names, local_tools=None, max_turns=8, models=None, required_keys=None):
     """Runs one Groq-hosted model to completion (a manual tool-use loop) against a subset of the
-    MCP server's tools plus any local_tools, returning (final_text, full_message_history)."""
+    MCP server's tools plus any local_tools, returning (final_text, full_message_history). Falls
+    back across every model in `models` on the primary account, then (if GROQ_API_KEY_EXITS is
+    configured) the same model list again on a second account with its own separate budget — see
+    get_secondary_client and _create_completion_with_fallback."""
     local_tools = local_tools or []
     local_tool_map = {tool.name: tool for tool in local_tools}
     models = models or MODELS
@@ -269,16 +299,19 @@ async def run_agent(system_prompt, user_prompt, mcp_session, mcp_tool_names, loc
     tool_schemas += [tool.to_tool_schema() for tool in local_tools]
     tool_schemas.append(FINAL_ANSWER_TOOL)
 
-    client = get_client()
+    clients = [("primary", get_client())]
+    secondary_client = get_secondary_client()
+    if secondary_client is not None:
+        clients.append(("secondary", secondary_client))
     system_prompt = (
         system_prompt
         + f"\n\nWhen you have your final answer, call the {FINAL_ANSWER_TOOL_NAME} tool with it as "
         "the arguments, instead of writing it as plain text."
     )
     messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-    # See CALL_TIMEOUT_SECONDS_PER_MODEL: one call below can walk the whole of `models`, so the
-    # watchdog has to cover all of them, not just one.
-    call_timeout = CALL_TIMEOUT_SECONDS_PER_MODEL * len(models)
+    # See CALL_TIMEOUT_SECONDS_PER_MODEL: one call below can walk the whole of `models` on every
+    # account in `clients`, so the watchdog has to cover all of them, not just one.
+    call_timeout = CALL_TIMEOUT_SECONDS_PER_MODEL * len(models) * len(clients)
 
     for _ in range(max_turns):
         remaining_models = models
@@ -287,7 +320,7 @@ async def run_agent(system_prompt, user_prompt, mcp_session, mcp_tool_names, loc
                 response, used_model = await asyncio.wait_for(
                     asyncio.to_thread(
                         _create_completion_with_fallback,
-                        client, remaining_models, messages=messages, max_tokens=1024,
+                        clients, remaining_models, messages=messages, max_tokens=1024,
                         tools=tool_schemas or None, tool_choice="auto" if tool_schemas else None,
                     ),
                     timeout=call_timeout,
