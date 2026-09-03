@@ -2,7 +2,7 @@ name: Multi-Agent Trading Cycle
 
 # 2026-09-01: GitHub's own `schedule` trigger is NOT used here — see exit-management-v2.yml's
 # comment on this same date for why. An external scheduler (cron-job.org) calls this workflow's
-# `workflow_dispatch` endpoint every 15 minutes instead — see multi_agent/README.md's
+# `workflow_dispatch` endpoint every 30 minutes instead — see multi_agent/README.md's
 # "Scheduled runs" section for the exact request configuration.
 
 on:
@@ -11,6 +11,12 @@ on:
 jobs:
   run-agent:
     runs-on: ubuntu-latest
+    # 2026-09-03: observed live — a run hung for 46+ minutes with no error, well past every
+    # legitimate run's duration (normally under a minute; the worst real contention-driven case
+    # seen was 30 minutes, before the GROQ_API_KEY_EXITS split reduced that). GitHub's own default
+    # job timeout is 6 hours, which is not a backstop — this caps a genuine hang at a bounded cost
+    # instead of it silently occupying a scheduled slot indefinitely.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 

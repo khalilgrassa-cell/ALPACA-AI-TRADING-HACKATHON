@@ -20,6 +20,8 @@ on:
 jobs:
   check-exits:
     runs-on: ubuntu-latest
+    # See multi-agent-trading-v2.yml's comment on this — same reasoning applies here.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
