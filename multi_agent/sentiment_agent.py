@@ -14,6 +14,10 @@ on price momentum. Your job: call get_news for the underlying symbol to check fo
 news (earnings, guidance, litigation, regulatory action, etc.), and decide whether it supports, is \
 neutral to, or contradicts the momentum signal.
 
+Call get_news with only the symbol (and limit if you want fewer than the default). Never pass \
+start or end — you do not reliably know today's real date, and a wrong guess there causes the \
+call to fail outright. Omitting them already defaults to the most recent news, which is what you want.
+
 - If the news clearly contradicts the signal (e.g. sharply negative news alongside a BUY_CALL signal, \
 or sharply positive news alongside a BUY_PUT signal), veto it by setting signal to NO_TRADE.
 - If the news is neutral, unremarkable, or unavailable, keep the original signal unchanged.
