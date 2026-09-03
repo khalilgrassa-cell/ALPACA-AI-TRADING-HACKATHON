@@ -47,17 +47,21 @@ evidence plus a review of practitioner writeups and academic momentum
 literature on why naive momentum-into-options strategies commonly lose money
 — not just parameter tuning for its own sake:
 
-- **`MOMENTUM_WINDOW` (5 → 40 trading days).** A backtest across 8 large-cap
-  symbols (~2.2yr daily data, de-meaned correlation between past momentum and
-  forward return, controlling for shared bull-market drift) found the 5-day
-  window sits in a short-horizon *reversal* regime (wrong sign for a
-  momentum-following signal), while 40-60 days showed the best continuation
-  correlation — consistent with academic momentum literature placing
-  continuation at multi-month horizons: [Alpha Architect](https://alphaarchitect.com/short-term-momentum-and-long-term-reversals-can-coexist/),
+- **`MOMENTUM_WINDOW` — not yet applied, worth revisiting.** A backtest
+  across 8 large-cap symbols (~2.2yr daily data, de-meaned correlation
+  between past momentum and forward return, controlling for shared
+  bull-market drift) found the current 5-day window sits in a short-horizon
+  *reversal* regime (wrong sign for a momentum-following signal), while
+  40-60 days showed the best continuation correlation in the same sweep —
+  consistent with academic momentum literature placing continuation at
+  multi-month horizons: [Alpha Architect](https://alphaarchitect.com/short-term-momentum-and-long-term-reversals-can-coexist/),
   [Quantpedia](https://quantpedia.com/strategies/short-term-reversal-in-stocks),
   [Review of Financial Studies](https://academic.oup.com/rfs/article-abstract/38/12/3673/8240327).
   A comparable open-source Alpaca momentum bot, [davidalv2/algo-trading-bot](https://github.com/davidalv2/algo-trading-bot),
-  independently uses a 20-day window rather than a multi-day one.
+  independently uses a 20-day window rather than a multi-day one. Tried
+  live once and reverted (unrelated infrastructure issues that day made it
+  hard to isolate its effect); the finding stands and is worth revisiting
+  on its own.
 - **`MAX_SPREAD_PCT` (new — contract-selection liquidity filter).** Live
   evidence: an illiquid contract's own bid/ask spread can exceed a trade's
   entire edge before any real price move happens (an ALNY risk-reversal
