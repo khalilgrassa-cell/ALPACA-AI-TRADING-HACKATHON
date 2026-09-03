@@ -1,11 +1,17 @@
 name: Exit Management Cycle
 
-# Runs exit_manager.py alone — no universe scan, no new candidates — every 5 minutes during US
-# market hours, separately from (and tighter than) the every-15-minutes full entry-scan cycle in
-# multi-agent-trading-v2.yml (which also runs its own exit check at the end of each cycle, at that
-# same 15-minute cadence). Protecting an already-open position from an adverse intraday move
+# Runs exit_manager.py alone — no universe scan, no new candidates — every 15 minutes during US
+# market hours, separately from (and tighter than) the every-30-minutes full entry-scan cycle in
+# multi-agent-trading-v2.yml (which also runs its own exit check at the end of each cycle).
+# Protecting an already-open position from an adverse intraday move
 # (stop-loss/take-profit/near-expiration) is more time-sensitive than finding new entries, so this
 # job checks more often than the full pipeline does.
+#
+# 2026-09-03: widened from every 5 minutes after live evidence that Exit Management's traffic —
+# running continuously throughout a Trading Cycle run that can itself take many minutes —
+# competes with the Trading Cycle's own Groq calls for the same shared, organization-wide
+# per-model rate-limit budget (Groq enforces these limits org-wide, not per API key). Less
+# frequent firing shrinks how often the two schedules' calls land in the same 60-second window.
 #
 # 2026-09-01: GitHub's own `schedule` trigger is NOT used here — after a since-fixed syntax error
 # was briefly pushed to an earlier version of this file, GitHub's cron registration got stuck and
@@ -43,9 +49,11 @@ jobs:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          # A dedicated key so this every-5-minutes cycle doesn't share a per-model rate-limit
-          # bucket with the every-30-minutes full trading cycle — see exit_manager.py's comment.
-          # Optional: falls back to GROQ_API_KEY above until this secret is added.
+          # 2026-09-03: intended to isolate this cycle's rate-limit budget from the trading
+          # cycle's — since confirmed NOT to work (Groq enforces per-model limits at the
+          # organization level, not per API key, so both keys draw on the same shared budget
+          # regardless). Left wired since it's harmless, but the real mitigations are the
+          # 15-minute interval above and TOP_N_HOTTEST — see exit_manager.py's comment.
           GROQ_API_KEY_EXITS: ${{ secrets.GROQ_API_KEY_EXITS }}
           # See multi-agent-trading-v2.yml's comment on this — same reasoning applies here.
           PYTHONUNBUFFERED: "1"

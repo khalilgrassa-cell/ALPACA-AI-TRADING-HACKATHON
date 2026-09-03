@@ -281,17 +281,24 @@ needed for this path, no server to host. Add `ALPACA_API_KEY`,
 `ALPACA_SECRET_KEY`, and `GROQ_API_KEY` as repository secrets.
 
 **`exit-management-v2.yml` also reads an optional `GROQ_API_KEY_EXITS`
-secret.** 2026-09-03: sharing one `GROQ_API_KEY` between this every-5-minutes
-cycle and the every-30-minutes full trading cycle meant both drew against the
-same per-model Groq rate-limit bucket — observed live, Exit Management's
-traffic alone kept `openai/gpt-oss-120b` (first in `MODELS`, hit on every
-single turn) permanently exhausted, forcing every turn of every agent in the
+secret — though this turned out not to actually help; see below.**
+2026-09-03: sharing one `GROQ_API_KEY` between this cycle and the full
+trading cycle meant both drew against the same per-model Groq rate-limit
+bucket — observed live, Exit Management's traffic running concurrently with
+a long Trading Cycle run kept `openai/gpt-oss-120b` (first in `MODELS`, hit
+on every single turn) exhausted, forcing every turn of every agent in the
 full cycle to pay out its full retry-then-fallback delay before reaching a
 model with headroom, which inflated a cycle's runtime well past its own
-30-minute schedule and caused overlapping runs. Add a second Groq API key as
-`GROQ_API_KEY_EXITS` to isolate the two schedules' budgets from each other
-(`exit_manager.py` prefers it when set, falling back to `GROQ_API_KEY`
-otherwise — so this is optional, not a breaking change).
+schedule and caused overlapping runs. A second Groq API key
+(`GROQ_API_KEY_EXITS`, `exit_manager.py` prefers it when set) was added to
+try to isolate the two schedules' budgets from each other — **confirmed live
+not to work**: Groq enforces its per-model rate limits at the organization
+level, not per API key, so a second key draws on the exact same shared
+budget regardless of which one authenticates the request. Left wired since
+it's harmless and optional (falls back to `GROQ_API_KEY` if unset), but the
+real mitigations that followed are this cycle's widened interval (5 -> 15
+minutes) and a lower `TOP_N_HOTTEST` on the trading cycle's own side (see
+"Model & cost" above).
 
 **Both workflows are triggered by `workflow_dispatch` only — GitHub's own
 `schedule` trigger is deliberately not used.** A syntax error briefly
@@ -313,8 +320,9 @@ POST https://api.github.com/repos/khalilgrassa-cell/ALPACA-AI-TRADING-HACKATHON/
 Headers: `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`, `Content-Type: application/json`.
 Body: `{"ref": "main"}`.
 
-Set up as two cron-job.org jobs: the exit-management URL every 5 minutes,
-the multi-agent-trading URL every 15 minutes, both restricted to
+Set up as two cron-job.org jobs: the exit-management URL every 15 minutes
+(widened from 5 on 2026-09-03 — see the `GROQ_API_KEY_EXITS` note above),
+the multi-agent-trading URL every 30 minutes, both restricted to
 13:30-20:00 UTC on weekdays. Use a **fine-grained personal access token
 scoped to only this repo with just "Actions: Read and write" permission**
 for the `Authorization` header — not the broader classic token used

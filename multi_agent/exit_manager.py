@@ -1,7 +1,7 @@
 """Runs exit management alone — no universe scan, no new candidates, no per-candidate Sentiment/
 Strategy/Risk/Order chain. Protecting an already-open position from an adverse intraday move is
 more time-sensitive than finding new entries, so this is meant to be scheduled more often (every
-5 minutes) than the full orchestrator.py cycle (every 15 minutes, which also runs its own exit
+15 minutes) than the full orchestrator.py cycle (every 30 minutes, which also runs its own exit
 check at the end) — see .github/workflows/exit-management-v2.yml."""
 import asyncio
 import os
@@ -11,13 +11,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "mcp_server"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "strategy"))
 
-# 2026-09-03: this cycle runs every 5 minutes, sharing GROQ_API_KEY with the every-30-minutes
-# full trading cycle would mean both draw against the same per-model Groq rate-limit bucket —
-# observed live, this alone was enough to keep openai/gpt-oss-120b permanently exhausted for the
-# rest of the day, forcing every single turn of every agent to pay out its full retry-then-fallback
-# delay before reaching a model with headroom, and inflating full-cycle runtime past its own
-# 30-minute schedule. A second key isolates the two schedules' rate-limit budgets from each other.
-# Falls back to the shared key if the dedicated one isn't configured yet.
+# 2026-09-03: this was meant to isolate this cycle's Groq usage from the every-30-minutes full
+# trading cycle's, since sharing GROQ_API_KEY meant both drew against the same per-model rate-limit
+# bucket — observed live, running concurrently was enough to keep openai/gpt-oss-120b permanently
+# exhausted, forcing every turn of every agent to pay out its full retry-then-fallback delay.
+# Since confirmed NOT to actually help: Groq enforces these limits at the *organization* level, not
+# per API key, so a second key draws on the identical shared budget regardless. Left in place since
+# it's harmless (falls back to the shared key if unset) — the real mitigations are this cycle's
+# 15-minute interval (widened from 5) and a lower TOP_N_HOTTEST on the trading cycle's own side.
 if os.environ.get("GROQ_API_KEY_EXITS"):
     os.environ["GROQ_API_KEY"] = os.environ["GROQ_API_KEY_EXITS"]
 
