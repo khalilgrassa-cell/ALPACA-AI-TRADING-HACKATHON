@@ -47,10 +47,25 @@ MOMENTUM_THRESHOLD = 1.0
 
 MIN_DTE = 5
 MAX_DTE = 21
-OTM_PCT = 0.02
+OTM_PCT = 0.02  # fallback only -- see TARGET_DELTA below, select_contract() prefers delta when available
 
-# Risk agent's option-chain fetch window: must be wider than OTM_PCT so the actual target strike
-# always falls inside the fetched range. This account has no OPRA market-data agreement (the risk
+# 2026-09-03: a flat OTM_PCT picks a strike distance in *price* terms, so it's too far out for a
+# low-volatility name and too close for a high-volatility one across a ~170-symbol universe with
+# very different vol profiles -- delta already encodes the same "how far out of the money" concept
+# but normalized by each contract's own volatility. Verified live: Alpaca's option snapshot/chain
+# responses include real per-contract greeks (delta, gamma, theta, vega) even on this account's
+# indicative/Basic feed, at no extra cost beyond one more batched get_option_snapshot call.
+# ~0.30 delta is a common choice for momentum/swing setups (see strategy/README.md's
+# "Research-informed changes" for the source). OTM_PCT above remains the fallback for any contract
+# whose delta wasn't fetched or wasn't returned (e.g. a snapshot call failure) -- never a hard
+# dependency, since a live data gap should degrade gracefully, not block a trade or crash.
+TARGET_DELTA = 0.30
+
+# Risk agent's option-chain fetch window, applied one-sided per option type (calls: current price
+# up to this much above; puts: this much below up to current price -- see risk_agent._fetch_otm_chain)
+# so the fetch is biased toward each type's own OTM side instead of a shared range that can get
+# exhausted by one side before ever reaching the other. Must be wide enough that a genuinely
+# ~TARGET_DELTA strike falls inside it. This account has no OPRA market-data agreement (the risk
 # agent always passes feed="indicative").
 CHAIN_STRIKE_RANGE_PCT = 0.10
 GET_OPTION_CHAIN_LIMIT = 50
@@ -153,6 +168,9 @@ def parse_contract(symbol, data):
         "strike": int(m.group(4)) / 1000,
         "ask": data.get("latestQuote", {}).get("ap", 0),
         "bid": data.get("latestQuote", {}).get("bp", 0),
+        # None when unavailable (e.g. the caller didn't fetch greeks) -- select_contract() falls
+        # back to OTM_PCT-based selection for any contract missing this.
+        "delta": (data.get("greeks") or {}).get("delta"),
     }
 
 
@@ -167,12 +185,13 @@ def _is_liquid_enough(contract):
 
 
 def select_contract(contracts, signal, current_price):
-    """Contract selection: closest strike to the target OTM offset, within the DTE window, among
-    contracts liquid enough to realistically exit later (see MAX_SPREAD_PCT)."""
+    """Contract selection: prefers the strike whose delta is closest to TARGET_DELTA (adapts to
+    each underlying's own volatility), within the DTE window, among contracts liquid enough to
+    realistically exit later (see MAX_SPREAD_PCT). Falls back to closest-strike-to-a-flat-OTM%
+    for any contract with no delta data (see TARGET_DELTA's comment)."""
     opt_type = {"BUY_CALL": "C", "BUY_PUT": "P"}.get(signal)
     if opt_type is None:
         return None
-    target = current_price * (1 + OTM_PCT) if opt_type == "C" else current_price * (1 - OTM_PCT)
     today = date.today()
     candidates = [
         c for c in contracts
@@ -180,7 +199,13 @@ def select_contract(contracts, signal, current_price):
         and MIN_DTE <= (c["expiration"] - today).days <= MAX_DTE
         and _is_liquid_enough(c)
     ]
-    return min(candidates, key=lambda c: abs(c["strike"] - target)) if candidates else None
+    if not candidates:
+        return None
+    with_delta = [c for c in candidates if c.get("delta") is not None]
+    if with_delta:
+        return min(with_delta, key=lambda c: abs(abs(c["delta"]) - TARGET_DELTA))
+    target = current_price * (1 + OTM_PCT) if opt_type == "C" else current_price * (1 - OTM_PCT)
+    return min(candidates, key=lambda c: abs(c["strike"] - target))
 
 
 def calculate_position_size(equity, contract_ask, signal, risk_pct=RISK_PCT, max_contracts=MAX_CONTRACTS):

@@ -28,15 +28,16 @@ full menu and the code-level guardrails on choosing between them.
 | `screen_universe(closes_by_symbol)` | Runs `calculate_momentum` across the universe, keeps the top `TOP_N_HOTTEST` by strength |
 | `STRATEGY_LEGS` / `STRATEGY_SIGNAL` | The strategy menu: which leg(s) (side + option-type signal) each strategy needs, and its base direction |
 | `parse_contract(symbol, data)` | Parses an OCC option symbol + quote snapshot into a plain dict |
-| `select_contract(contracts, signal, current_price)` | Contract selection: closest strike to the target OTM offset, within the DTE window, among contracts liquid enough to exit later (`MAX_SPREAD_PCT`) — used per leg |
+| `select_contract(contracts, signal, current_price)` | Contract selection: closest delta to `TARGET_DELTA` when available (else closest strike to the flat `OTM_PCT` offset), within the DTE window, among contracts liquid enough to exit later (`MAX_SPREAD_PCT`) — used per leg |
 | `calculate_position_size(equity, contract_ask, signal)` | Risk management for a single-leg strategy: caps quantity at `RISK_PCT` of equity and `MAX_CONTRACTS` |
 | `calculate_combo_position_size(equity, long_ask, short_bid, strategy)` | Risk management for a 2-leg combo: sizes off the net debit per contract |
 | `estimate_trade_cost(legs, qty)` | Net capital committed for a set of legs — long asks paid minus short bids received |
 | `exit_reason(position)` | Exit rules: `TAKE_PROFIT` / `STOP_LOSS` on unrealized P&L, or `TIME_EXIT` near expiration — applies per leg/symbol, combo or not |
 
 All the tunable constants (`MOMENTUM_WINDOW`, `MOMENTUM_THRESHOLD`,
-`TOP_N_HOTTEST`, `MIN_DTE`/`MAX_DTE`, `OTM_PCT`, `MAX_SPREAD_PCT`,
-`RISK_PCT`/`MAX_CONTRACTS`, `TAKE_PROFIT_PCT`/`STOP_LOSS_PCT`/`EXIT_DTE_BUFFER`,
+`TOP_N_HOTTEST`, `MIN_DTE`/`MAX_DTE`, `OTM_PCT`, `TARGET_DELTA`,
+`CHAIN_STRIKE_RANGE_PCT`, `MAX_SPREAD_PCT`, `RISK_PCT`/`MAX_CONTRACTS`,
+`TAKE_PROFIT_PCT`/`STOP_LOSS_PCT`/`EXIT_DTE_BUFFER`,
 `MIN_HOLD_MINUTES_BEFORE_STOP_LOSS`, `MAX_CYCLE_RISK_PCT`) live at the top of
 `momentum_strategy.py`.
 
@@ -76,14 +77,31 @@ literature on why naive momentum-into-options strategies commonly lose money
   Gating `STOP_LOSS` specifically (never `TAKE_PROFIT` or `TIME_EXIT`) on a
   minimum holding period is a lower-risk mitigation than removing the stop
   entirely, given position sizing (`RISK_PCT`) already bounds the worst case.
-- **Not yet done, worth revisiting:** delta/volatility-adjusted strike
-  selection instead of a flat `OTM_PCT` — a fixed 2% OTM is too far out for
-  low-volatility names and too close for high-volatility ones across a
-  ~170-symbol universe with very different vol profiles
-  ([TradePro Academy](https://tradeproacademy.com/momentum-swing-trading-options-big-returns-on-investments/)
-  suggests ~0.30 delta for momentum/swing setups). Not implemented yet
-  because it needs a volatility estimate at selection time that the risk
-  agent doesn't currently fetch — a real change, not a quick constant tweak.
+- **`TARGET_DELTA` (new — delta-based strike selection).** A fixed 2% OTM
+  (`OTM_PCT`) is too far out for low-volatility names and too close for
+  high-volatility ones across a ~170-symbol universe with very different vol
+  profiles; delta already encodes "how far OTM" normalized by each
+  contract's own volatility ([TradePro Academy](https://tradeproacademy.com/momentum-swing-trading-options-big-returns-on-investments/)
+  suggests ~0.30 for momentum/swing setups). Verified live that Alpaca's
+  option snapshot/chain responses include real per-contract greeks even on
+  this account's indicative/Basic feed, at the cost of one more batched
+  `get_option_snapshot` call (see `risk_agent._attach_deltas`) —
+  `select_contract()` prefers delta when available and falls back to
+  `OTM_PCT` otherwise, so a snapshot outage degrades gracefully instead of
+  blocking a trade.
+- **Option-chain fetch split per type, biased toward each type's own OTM
+  side (`risk_agent._fetch_otm_chain`).** Found while verifying the delta
+  change: a single `get_option_chain` call spanning both calls and puts in
+  one shared strike range was getting exhausted by one side (dense $1-strike
+  names like QQQ) before ever reaching genuinely OTM strikes on the other —
+  live evidence showed a call fetch returning 50 contracts, *all*
+  in-the-money (deltas 0.75-0.99, zero puts at all), which independently
+  explains earlier risk-reversal combos failing to find a put leg at all.
+  Fetching each type separately, with its own range biased toward its own
+  OTM side, fixed both problems in the same change — verified live
+  post-fix: a LONG_CALL pick landed at delta 0.30 (vs. TARGET_DELTA's 0.30
+  target) instead of the previous 0.75, and a RISK_REVERSAL_BULLISH found
+  both legs where it previously failed on the put leg every time.
 
 ## What's deliberately *not* here
 

@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from momentum_strategy import (
-    NASDAQ_100, SP_100, STRATEGY_LEGS, STRATEGY_SIGNAL, TOP_N_HOTTEST, UNIVERSE,
+    NASDAQ_100, SP_100, STRATEGY_LEGS, STRATEGY_SIGNAL, TARGET_DELTA, TOP_N_HOTTEST, UNIVERSE,
     calculate_combo_position_size, calculate_momentum, calculate_position_size, estimate_trade_cost,
     exit_reason, parse_contract, screen_universe, select_contract,
 )
@@ -50,6 +50,16 @@ def test_parse_contract_rejects_malformed_symbols():
     assert parse_contract("AAPL26090XC00230000", {}) is None
 
 
+def test_parse_contract_extracts_delta_when_present():
+    parsed = parse_contract("QQQ260904C00731000", {"latestQuote": {"ap": 1.0, "bp": 0.9}, "greeks": {"delta": 0.31}})
+    assert parsed["delta"] == 0.31
+
+
+def test_parse_contract_delta_defaults_to_none_without_greeks():
+    parsed = parse_contract("QQQ260904C00731000", {"latestQuote": {"ap": 1.0, "bp": 0.9}})
+    assert parsed["delta"] is None
+
+
 def test_select_contract_picks_closest_otm_call():
     exp = (date.today() + timedelta(days=10)).strftime("%y%m%d")
     contracts = [
@@ -91,6 +101,40 @@ def test_select_contract_skips_an_illiquid_contract_in_favor_of_a_liquid_one_far
     ]
     chosen = select_contract(contracts, "BUY_CALL", current_price=716.43)
     assert chosen["strike"] == 700.0
+
+
+def test_select_contract_prefers_target_delta_over_strike_distance():
+    exp = (date.today() + timedelta(days=10)).strftime("%y%m%d")
+    contracts = [
+        # Closest to the flat 2% OTM target (~730.76), but delta is far from TARGET_DELTA.
+        parse_contract(f"QQQ{exp}C00730000", {"latestQuote": {"ap": 5.0, "bp": 4.9}, "greeks": {"delta": 0.55}}),
+        # Farther from the OTM target, but delta is right at TARGET_DELTA -- should win.
+        parse_contract(f"QQQ{exp}C00750000", {"latestQuote": {"ap": 2.0, "bp": 1.9}, "greeks": {"delta": TARGET_DELTA}}),
+    ]
+    chosen = select_contract(contracts, "BUY_CALL", current_price=716.43)
+    assert chosen["strike"] == 750.0
+
+
+def test_select_contract_prefers_target_delta_for_puts_using_absolute_value():
+    exp = (date.today() + timedelta(days=10)).strftime("%y%m%d")
+    contracts = [
+        parse_contract(f"QQQ{exp}P00700000", {"latestQuote": {"ap": 5.0, "bp": 4.9}, "greeks": {"delta": -0.55}}),
+        # Put deltas are negative -- abs(-0.30) == TARGET_DELTA should still be recognized as closest.
+        parse_contract(f"QQQ{exp}P00680000", {"latestQuote": {"ap": 2.0, "bp": 1.9}, "greeks": {"delta": -TARGET_DELTA}}),
+    ]
+    chosen = select_contract(contracts, "BUY_PUT", current_price=716.43)
+    assert chosen["strike"] == 680.0
+
+
+def test_select_contract_falls_back_to_otm_distance_when_no_contract_has_delta():
+    exp = (date.today() + timedelta(days=10)).strftime("%y%m%d")
+    contracts = [
+        parse_contract(f"QQQ{exp}C00700000", {"latestQuote": {"ap": 5.0, "bp": 4.9}}),
+        parse_contract(f"QQQ{exp}C00730000", {"latestQuote": {"ap": 1.0, "bp": 0.9}}),  # closest to OTM target
+    ]
+    assert all(c["delta"] is None for c in contracts)
+    chosen = select_contract(contracts, "BUY_CALL", current_price=716.43)
+    assert chosen["strike"] == 730.0
 
 
 def test_calculate_position_size_gated():

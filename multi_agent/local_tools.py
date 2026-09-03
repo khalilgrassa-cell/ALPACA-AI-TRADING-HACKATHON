@@ -18,7 +18,10 @@ from llm_tools import LocalTool
 def _select_option_contract(contracts, signal, current_price):
     parsed = [
         c for c in (
-            parse_contract(contract["symbol"], {"latestQuote": {"ap": contract.get("ask", 0), "bp": contract.get("bid", 0)}})
+            parse_contract(contract["symbol"], {
+                "latestQuote": {"ap": contract.get("ask", 0), "bp": contract.get("bid", 0)},
+                "greeks": {"delta": contract.get("delta")},
+            })
             for contract in contracts
         ) if c is not None
     ]
@@ -31,9 +34,10 @@ def _select_option_contract(contracts, signal, current_price):
 select_option_contract = LocalTool(
     name="select_option_contract",
     description=(
-        "Given raw option contract snapshots (symbol, ask, bid), the trading signal, and the "
-        "underlying's current price, picks the contract closest to the target OTM strike within "
-        "the configured DTE window. Returns {\"chosen\": null} if none qualify."
+        "Given raw option contract snapshots (symbol, ask, bid, optionally delta), the trading "
+        "signal, and the underlying's current price, picks the contract closest to TARGET_DELTA "
+        "when delta data is present, else closest to the target OTM strike -- within the "
+        "configured DTE window. Returns {\"chosen\": null} if none qualify."
     ),
     input_schema={
         "type": "object",
@@ -46,6 +50,7 @@ select_option_contract = LocalTool(
                         "symbol": {"type": "string"},
                         "ask": {"type": "number"},
                         "bid": {"type": "number"},
+                        "delta": {"type": ["number", "null"]},
                     },
                     "required": ["symbol", "ask", "bid"],
                 },

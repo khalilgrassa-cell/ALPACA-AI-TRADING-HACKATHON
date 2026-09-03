@@ -44,6 +44,7 @@ def test_assess_risk_selects_contract_and_sizes_for_a_single_leg_strategy():
             f"QQQ{EXP}C00700000": chain_snapshot(ask=5.0, bid=4.9),
             f"QQQ{EXP}C00731000": chain_snapshot(ask=0.91, bid=0.90),
         }}),
+        mcp_result({"snapshots": {}}),  # get_option_snapshot: no delta data -> falls back to OTM_PCT
     )
 
     result = asyncio.run(risk_agent.assess_risk(
@@ -54,20 +55,43 @@ def test_assess_risk_selects_contract_and_sizes_for_a_single_leg_strategy():
     assert result["qty"] > 0
     assert result["legs"] == [{"symbol": f"QQQ{EXP}C00731000", "ask": 0.91, "bid": 0.90, "side": "long"}]
 
-    account_call, chain_call = session.call_tool.call_args_list
+    account_call, chain_call, snapshot_call = session.call_tool.call_args_list
     assert account_call.args[0] == "get_account_info"
     assert chain_call.args[0] == "get_option_chain"
     assert chain_call.args[1]["underlying_symbol"] == "QQQ"
     assert chain_call.args[1]["feed"] == "indicative"
+    # Biased toward the OTM side (at/above current price for a call) -- not a shared range with puts.
+    assert chain_call.args[1]["type"] == "call"
+    assert chain_call.args[1]["strike_price_gte"] == 716.43
+    assert snapshot_call.args[0] == "get_option_snapshot"
+
+
+def test_assess_risk_prefers_target_delta_over_strike_distance_when_available():
+    session = fake_session(
+        mcp_result({"equity": "100000"}),
+        mcp_result({"snapshots": {
+            f"QQQ{EXP}C00731000": chain_snapshot(ask=5.0, bid=4.9),  # closest strike, wrong delta
+            f"QQQ{EXP}C00750000": chain_snapshot(ask=2.0, bid=1.9),  # farther strike, target delta
+        }}),
+        mcp_result({"snapshots": {
+            f"QQQ{EXP}C00731000": {"greeks": {"delta": 0.55}},
+            f"QQQ{EXP}C00750000": {"greeks": {"delta": 0.30}},
+        }}),
+    )
+
+    result = asyncio.run(risk_agent.assess_risk(
+        session, symbol="QQQ", strategy="LONG_CALL", current_price=716.43, min_dte=5, max_dte=21,
+    ))
+
+    assert result["legs"] == [{"symbol": f"QQQ{EXP}C00750000", "ask": 2.0, "bid": 1.9, "side": "long"}]
 
 
 def test_assess_risk_handles_a_combo_strategy_with_two_legs():
     session = fake_session(
         mcp_result({"equity": "100000"}),
-        mcp_result({"snapshots": {
-            f"QQQ{EXP}C00731000": chain_snapshot(ask=2.0, bid=1.9),
-            f"QQQ{EXP}P00702000": chain_snapshot(ask=1.1, bid=1.0),
-        }}),
+        mcp_result({"snapshots": {f"QQQ{EXP}C00731000": chain_snapshot(ask=2.0, bid=1.9)}}),  # call chain
+        mcp_result({"snapshots": {f"QQQ{EXP}P00702000": chain_snapshot(ask=1.1, bid=1.0)}}),  # put chain
+        mcp_result({"snapshots": {}}),  # get_option_snapshot: no delta data -> falls back to OTM_PCT
     )
 
     result = asyncio.run(risk_agent.assess_risk(
@@ -77,6 +101,12 @@ def test_assess_risk_handles_a_combo_strategy_with_two_legs():
     assert result["should_trade"] is True
     sides = {leg["side"] for leg in result["legs"]}
     assert sides == {"long", "short"}
+
+    call_chain_call, put_chain_call = session.call_tool.call_args_list[1:3]
+    assert call_chain_call.args[1]["type"] == "call"
+    assert call_chain_call.args[1]["strike_price_gte"] == 716.43
+    assert put_chain_call.args[1]["type"] == "put"
+    assert put_chain_call.args[1]["strike_price_lte"] == 716.43
 
 
 def test_assess_risk_propagates_no_trade_strategy_without_calling_mcp():

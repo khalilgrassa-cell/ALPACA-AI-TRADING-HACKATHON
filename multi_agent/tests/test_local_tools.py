@@ -23,6 +23,16 @@ def test_select_option_contract_no_trade():
     assert result["chosen"] is None
 
 
+def test_select_option_contract_prefers_delta_when_present():
+    exp = (date.today() + timedelta(days=10)).strftime("%y%m%d")
+    contracts = [
+        {"symbol": f"QQQ{exp}C00730000", "ask": 5.0, "bid": 4.9, "delta": 0.55},  # closest strike, wrong delta
+        {"symbol": f"QQQ{exp}C00750000", "ask": 2.0, "bid": 1.9, "delta": 0.30},  # farther strike, target delta
+    ]
+    result = select_option_contract.func(contracts, "BUY_CALL", current_price=716.43)
+    assert result["chosen"]["strike"] == 750.0
+
+
 def test_calculate_position_size_gated():
     result = calculate_position_size.func(equity=100000, contract_ask=0.91, signal="BUY_CALL")
     assert result["should_trade"] is True

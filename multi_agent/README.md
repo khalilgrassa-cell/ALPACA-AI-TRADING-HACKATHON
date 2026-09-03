@@ -49,7 +49,7 @@ functions to validate the signal against history rather than trade it live.
 | Universe Scan | `universe_scanner.py` (no LLM — pure math) | `get_stock_bars` | — | list of `{symbol, signal, current_price, momentum_pct}`, top `TOP_N_HOTTEST` by strength |
 | Sentiment | `sentiment_agent.py` | `get_news` | — | `{sentiment, signal, overridden, reasoning}` |
 | Strategy | `strategy_agent.py` | — | — | `{strategy, reasoning}` |
-| Risk | `risk_agent.py` (no LLM — deterministic) | `get_account_info`, `get_option_chain` | `select_option_contract`, `calculate_position_size`, `calculate_combo_position_size` | `{strategy, legs, qty, should_trade, reasoning}` |
+| Risk | `risk_agent.py` (no LLM — deterministic) | `get_account_info`, `get_option_chain` (once per option type needed, each biased toward its own OTM side), `get_option_snapshot` (for delta) | `select_option_contract`, `calculate_position_size`, `calculate_combo_position_size` | `{strategy, legs, qty, should_trade, reasoning}` |
 | Trader | `trading_agent.py` (no LLM — deterministic) | `place_option_order`, `get_all_positions`, `get_orders`, `close_position` | `check_exit_rule` | `{order_submitted, order_result, reasoning}` per leg; `{open_positions, exits, reasoning}` for exit management |
 
 Each LLM stage's final answer is a JSON object (enforced by its system
