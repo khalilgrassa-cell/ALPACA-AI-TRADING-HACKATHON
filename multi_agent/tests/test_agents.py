@@ -1,59 +1,116 @@
-"""Unit tests for the risk/trading agent wrappers — mocks llm_tools.run_agent, so no Groq API key, MCP server, or network access is needed."""
+"""Unit tests for the risk/trading agents. risk_agent is deterministic (no LLM) — mocks the MCP
+session directly. trading_agent is still LLM-driven — mocks llm_tools.run_agent instead. Neither
+needs a Groq API key, MCP server, or network access."""
 import asyncio
 import sys
+from datetime import date, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import risk_agent
 import trading_agent
 
+EXP = (date.today() + timedelta(days=10)).strftime("%y%m%d")  # inside risk_agent's 5-21 DTE window
 
-def test_assess_risk_parses_decision_and_uses_expected_tools():
-    canned = (
-        '{"strategy": "LONG_CALL", "legs": [{"symbol": "QQQ260904C00731000", "ask": 0.91, "bid": 0.9, "side": "long"}], '
-        '"qty": 3, "should_trade": true, "reasoning": "ok"}'
+
+def mcp_result(data):
+    return SimpleNamespace(is_error=False, structured_content={"data": data}, content=[])
+
+
+def mcp_error_result(error_text):
+    return SimpleNamespace(is_error=True, structured_content={}, content=[SimpleNamespace(text=error_text)])
+
+
+def chain_snapshot(ask, bid):
+    return {"latestQuote": {"ap": ask, "bp": bid}}
+
+
+def fake_session(*call_tool_results):
+    session = MagicMock()
+    session.call_tool = AsyncMock(side_effect=call_tool_results)
+    return session
+
+
+def test_assess_risk_selects_contract_and_sizes_for_a_single_leg_strategy():
+    session = fake_session(
+        mcp_result({"equity": "100000"}),
+        mcp_result({"snapshots": {
+            f"QQQ{EXP}C00700000": chain_snapshot(ask=5.0, bid=4.9),
+            f"QQQ{EXP}C00731000": chain_snapshot(ask=0.91, bid=0.90),
+        }}),
     )
-    with patch.object(risk_agent, "run_agent", new=AsyncMock(return_value=(canned, []))) as mock_run:
-        result = asyncio.run(risk_agent.assess_risk(
-            mcp_session="fake-session", symbol="QQQ", strategy="LONG_CALL",
-            current_price=716.43, min_dte=5, max_dte=21,
-        ))
+
+    result = asyncio.run(risk_agent.assess_risk(
+        session, symbol="QQQ", strategy="LONG_CALL", current_price=716.43, min_dte=5, max_dte=21,
+    ))
 
     assert result["should_trade"] is True
-    assert result["qty"] == 3
-    args, kwargs = mock_run.call_args
-    assert "LONG_CALL" in args[1] and "5-21" in args[1] and "long leg: BUY_CALL" in args[1]
-    assert kwargs["mcp_tool_names"] == {"get_account_info", "get_option_chain"}
-    assert {tool.name for tool in kwargs["local_tools"]} == {"select_option_contract", "calculate_position_size"}
+    assert result["qty"] > 0
+    assert result["legs"] == [{"symbol": f"QQQ{EXP}C00731000", "ask": 0.91, "bid": 0.90, "side": "long"}]
+
+    account_call, chain_call = session.call_tool.call_args_list
+    assert account_call.args[0] == "get_account_info"
+    assert chain_call.args[0] == "get_option_chain"
+    assert chain_call.args[1]["underlying_symbol"] == "QQQ"
+    assert chain_call.args[1]["feed"] == "indicative"
 
 
-def test_assess_risk_describes_both_legs_for_a_combo_strategy_and_uses_combo_sizing_tool():
-    canned = '{"strategy": "RISK_REVERSAL_BULLISH", "legs": [], "qty": 0, "should_trade": false, "reasoning": "n/a"}'
-    with patch.object(risk_agent, "run_agent", new=AsyncMock(return_value=(canned, []))) as mock_run:
-        asyncio.run(risk_agent.assess_risk(
-            mcp_session="fake-session", symbol="QQQ", strategy="RISK_REVERSAL_BULLISH",
-            current_price=716.43, min_dte=5, max_dte=21,
-        ))
+def test_assess_risk_handles_a_combo_strategy_with_two_legs():
+    session = fake_session(
+        mcp_result({"equity": "100000"}),
+        mcp_result({"snapshots": {
+            f"QQQ{EXP}C00731000": chain_snapshot(ask=2.0, bid=1.9),
+            f"QQQ{EXP}P00702000": chain_snapshot(ask=1.1, bid=1.0),
+        }}),
+    )
 
-    args, kwargs = mock_run.call_args
-    assert "long leg: BUY_CALL" in args[1] and "short leg: BUY_PUT" in args[1]
-    # Only the combo sizing tool is offered — not calculate_position_size too — so a 2-leg call's
-    # tool schemas don't carry a tool it will never use.
-    assert {tool.name for tool in kwargs["local_tools"]} == {"select_option_contract", "calculate_combo_position_size"}
+    result = asyncio.run(risk_agent.assess_risk(
+        session, symbol="QQQ", strategy="RISK_REVERSAL_BULLISH", current_price=716.43, min_dte=5, max_dte=21,
+    ))
+
+    assert result["should_trade"] is True
+    sides = {leg["side"] for leg in result["legs"]}
+    assert sides == {"long", "short"}
 
 
-def test_assess_risk_propagates_no_trade_strategy():
-    canned = '{"strategy": "NO_TRADE", "legs": [], "qty": 0, "should_trade": false, "reasoning": "flat"}'
-    with patch.object(risk_agent, "run_agent", new=AsyncMock(return_value=(canned, []))):
-        result = asyncio.run(risk_agent.assess_risk(
-            mcp_session="fake-session", symbol="QQQ", strategy="NO_TRADE",
-            current_price=716.43, min_dte=5, max_dte=21,
-        ))
+def test_assess_risk_propagates_no_trade_strategy_without_calling_mcp():
+    session = fake_session()
+
+    result = asyncio.run(risk_agent.assess_risk(
+        session, symbol="QQQ", strategy="NO_TRADE", current_price=716.43, min_dte=5, max_dte=21,
+    ))
 
     assert result["should_trade"] is False
     assert result["legs"] == []
+    session.call_tool.assert_not_called()
+
+
+def test_assess_risk_reports_should_trade_false_when_no_contract_qualifies():
+    session = fake_session(
+        mcp_result({"equity": "100000"}),
+        mcp_result({"snapshots": {}}),
+    )
+
+    result = asyncio.run(risk_agent.assess_risk(
+        session, symbol="QQQ", strategy="LONG_CALL", current_price=716.43, min_dte=5, max_dte=21,
+    ))
+
+    assert result["should_trade"] is False
+    assert result["legs"] == []
+
+
+def test_assess_risk_reports_should_trade_false_on_get_account_info_failure():
+    session = fake_session(mcp_error_result("rate limited"))
+
+    result = asyncio.run(risk_agent.assess_risk(
+        session, symbol="QQQ", strategy="LONG_CALL", current_price=716.43, min_dte=5, max_dte=21,
+    ))
+
+    assert result["should_trade"] is False
+    assert "rate limited" in result["reasoning"]
 
 
 def test_submit_order_uses_expected_tools_and_contract():

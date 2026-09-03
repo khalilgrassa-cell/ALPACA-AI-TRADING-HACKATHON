@@ -1,15 +1,15 @@
 # Multi-Agent Trading Pipeline
 
-The trading strategy, executed as four specialized LLM agents (plus two
-deterministic steps). Each agent is a real model call (via the Groq API,
+The trading strategy, executed as three specialized LLM agents (plus three
+deterministic steps). Each LLM stage is a real model call (via the Groq API,
 with automatic fallback across several Groq-hosted models — see "Model &
 cost" below) with its own system prompt and its own narrow slice of tools,
 orchestrated into a chain by `orchestrator.py`.
 
 ```
-Market Conditions   Universe Scan     Sentiment      Strategy      Risk         Trading
-(deterministic)  →  (deterministic) → Agent      →   Agent    →    Agent    →    Agent
-(is it open?)      (top 5 hottest/    (news         (which        (contract    (execution)
+Market Conditions   Universe Scan     Sentiment      Strategy         Risk          Trading
+(deterministic)  →  (deterministic) → Agent      →   Agent    →    (deterministic) → Agent
+(is it open?)      (top 3 hottest/    (news         (which        (contract       (execution)
                     trending symbols)  sentiment)     strategy?)    + sizing)
 ```
 
@@ -33,10 +33,13 @@ asking the model to compute momentum, strike selection, position sizing, or
 P&L thresholds in its head, each agent gets a **local tool** (`local_tools.py`)
 that does that one calculation deterministically — thin wrappers over
 `../strategy/momentum_strategy.py` (`calculate_momentum`, `select_contract`,
-`calculate_position_size`, `exit_reason`). The model's job is to decide
-*when* to call which tool and *how* to interpret the result, not to do the
-math itself. `backtest.py`, further down, reuses the same strategy functions
-to validate the signal against history rather than trade it live.
+`calculate_position_size`, `exit_reason`). For the LLM agents (Sentiment,
+Strategy, Trading), the model's job is to decide *when* to call which tool
+and *how* to interpret the result, not to do the math itself — `risk_agent.py`
+calls the exact same local tools directly in code instead, since there's no
+judgment involved in its sequence (see the pipeline stages table above).
+`backtest.py`, further down, reuses the same strategy functions to validate
+the signal against history rather than trade it live.
 
 ## The pipeline stages
 
@@ -46,18 +49,21 @@ to validate the signal against history rather than trade it live.
 | Universe Scan | `universe_scanner.py` (no LLM — pure math) | `get_stock_bars` | — | list of `{symbol, signal, current_price, momentum_pct}`, top `TOP_N_HOTTEST` by strength |
 | Sentiment | `sentiment_agent.py` | `get_news` | — | `{sentiment, signal, overridden, reasoning}` |
 | Strategy | `strategy_agent.py` | — | — | `{strategy, reasoning}` |
-| Risk | `risk_agent.py` | `get_account_info`, `get_option_chain` | `select_option_contract`, `calculate_position_size`, `calculate_combo_position_size` | `{strategy, legs, qty, should_trade, reasoning}` |
+| Risk | `risk_agent.py` (no LLM — deterministic) | `get_account_info`, `get_option_chain` | `select_option_contract`, `calculate_position_size`, `calculate_combo_position_size` | `{strategy, legs, qty, should_trade, reasoning}` |
 | Trader | `trading_agent.py` | `place_option_order`, `get_all_positions`, `close_position` | `check_exit_rule` | `{order_submitted, order_result, reasoning}` per leg; `{open_positions, exits, reasoning}` for exit management |
 
 Each LLM stage's final answer is a JSON object (enforced by its system
 prompt and parsed with `llm_tools.parse_json_response`), which becomes the
-next stage's input. Market Conditions and the Universe Scan are the two
-non-LLM stages: "is the market open" is a single boolean field on
-`get_clock`'s response, and "does this cross a numeric momentum threshold,
-and is it in the top 5 by strength" is exact math — neither is a judgment
-call, so both run as plain code instead of a model call. Beyond the obvious
-cost/latency savings, this also removes a single point of failure: an LLM
-call is the one part of this pipeline that can stall on a degraded
+next stage's input. Market Conditions, the Universe Scan, and Risk are the
+three non-LLM stages: "is the market open" is a single boolean field on
+`get_clock`'s response, "does this cross a numeric momentum threshold, and
+is it in the top `TOP_N_HOTTEST` by strength" is exact math, and contract
+selection/position sizing (2026-09-03: previously an LLM agent) is the same
+fixed sequence of already-deterministic tool calls every time — none of
+these are a judgment call, so all three run as plain code instead of a
+model call. Beyond the obvious cost/latency savings, this also removes a
+single point of failure: an LLM call is the one part of this pipeline that
+can stall on a degraded
 connection for minutes (see `llm_tools.CALL_TIMEOUT_SECONDS_PER_MODEL`),
 and market-open is checked at the very start of every cycle — running it as
 a network+parsing call was adding that risk before anything else even ran,
@@ -141,8 +147,9 @@ log or JSONL file.
   `MODELS` once the current one exhausts its rate-limit retries or hits a
   too-large-for-this-minute request (Groq returns that as a 413, not a 429 —
   see `_is_oversized_request_error`).
-- `tests/test_agents.py` — unit tests for the `assess_risk`/`submit_order`/
-  `manage_exits` wrappers, against a mocked `run_agent`.
+- `tests/test_agents.py` — unit tests for `assess_risk` (deterministic —
+  against a mocked MCP session) and the `submit_order`/`manage_exits`
+  wrappers (LLM-backed — against a mocked `run_agent`).
 - `tests/test_market_conditions_agent.py` — unit tests for the open/closed
   cases.
 - `tests/test_universe_scanner.py` — unit tests for the deterministic scan.
@@ -217,15 +224,16 @@ sequentially against one MCP session (not concurrently).
 
 ## Safety
 
-Enforced by the agents' own tool choices and code-level clamps rather than a
-single `if` statement:
+Enforced by the LLM agents' own tool choices and code-level clamps, plus the
+deterministic risk agent's own logic, rather than a single `if` statement:
 
 - The sentiment agent can only veto a signal toward `NO_TRADE`
   (`sentiment_agent._clamp_signal`); the strategy agent can only choose a
   strategy matching the signal's direction, or `NO_TRADE`
   (`strategy_agent._clamp_strategy`).
-- The risk agent only sets `should_trade: true` when every leg's contract
-  was actually found and the risk-gated quantity is > 0.
+- The (deterministic) risk agent only sets `should_trade: true` when every
+  leg's contract was actually found and the risk-gated quantity is > 0 —
+  guaranteed by plain code now, not an LLM's tool-calling discipline.
 - The trading agent only calls `place_option_order` when `should_trade` is
   true, and only calls `close_position` when `EXECUTE_EXITS` (in
   `orchestrator.py`, default `False`) is true.

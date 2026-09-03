@@ -1,72 +1,104 @@
 """Risk agent: selects the option contract(s) a chosen strategy needs and computes a risk-gated
-position size — for both plain single-leg strategies and 2-leg risk-reversal combos."""
+position size -- for both plain single-leg strategies and 2-leg risk-reversal combos.
+
+Deterministic, not an LLM call. 2026-09-03: this used to be a Groq-hosted agent that called
+get_account_info -> get_option_chain -> select_option_contract (per leg) ->
+calculate_position_size/calculate_combo_position_size in a fixed order every time -- pure
+plumbing over exact math, with no judgment call anywhere in the sequence (the same reasoning
+universe_scanner.py's screen already applies to signal generation). Rewritten as plain code after
+live evidence that Groq enforces its per-model rate limits at the *organization* level, not per
+API key -- every LLM call anywhere in the pipeline draws on the same shared, exhaustible budget,
+so removing an entire agent's calls per candidate (with zero loss of quality, since there was
+nothing here an LLM was actually deciding) is a direct, safe cut to that pressure."""
 import asyncio
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent / "mcp_server"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "strategy"))
-from momentum_strategy import STRATEGY_LEGS
+from mcp_client import mcp_data, mcp_error
+from momentum_strategy import CHAIN_STRIKE_RANGE_PCT, GET_OPTION_CHAIN_LIMIT, STRATEGY_LEGS
 
-from llm_tools import parse_json_response, run_agent
 from local_tools import calculate_combo_position_size, calculate_position_size, select_option_contract
 
-SYSTEM_PROMPT = """You are the risk-management agent in a multi-agent options trading system.
 
-You receive a strategy (LONG_CALL, LONG_PUT, RISK_REVERSAL_BULLISH, RISK_REVERSAL_BEARISH, or \
-NO_TRADE) chosen by the strategy agent, plus the leg(s) it needs — each leg is a side \
-(long/short) and a directional signal (BUY_CALL or BUY_PUT) telling you which option type and \
-strike offset to pick for that leg. Your job:
-1. If the strategy is NO_TRADE, skip straight to the final answer with legs: [], qty: 0, should_trade: false.
-2. Otherwise, call get_account_info for current equity, then get_option_chain for the underlying's \
-option contracts in the given expiration window. This account has no OPRA market-data agreement, \
-so always pass feed="indicative" — the default feed will fail with a 403. Always also pass \
-strike_price_gte and strike_price_lte narrowed to within 10% of the current price, and limit=50 — \
-fetching the full chain wastes tokens on strikes nowhere near what you'll actually pick. Do not \
-filter by option type — the same fetched chain covers both legs of a combo.
-3. For each leg, call select_option_contract with the fetched contracts, that leg's own signal, \
-and the current price, to pick its strike.
-4. If there is one leg, call calculate_position_size with the account equity and that leg's ask \
-price to get the exact risk-gated quantity. If there are two legs (a combo), call \
-calculate_combo_position_size with the long leg's ask, the short leg's bid, and the strategy, \
-instead — do not compute either by hand. Use the same quantity for both legs of a combo.
-5. If any leg could not be chosen (select_option_contract returned chosen: null), treat the whole \
-trade as should_trade: false.
-
-Respond with your final answer as a single JSON object, and nothing else, with this shape:
-{"strategy": string, "legs": [{"symbol": string, "ask": number, "bid": number, "side": "long" | "short"}], "qty": integer, "should_trade": boolean, "reasoning": string}
-legs must be an empty list when should_trade is false.
-"""
+def _no_trade(strategy, reasoning):
+    return {"strategy": strategy, "legs": [], "qty": 0, "should_trade": False, "reasoning": reasoning}
 
 
 async def assess_risk(mcp_session, symbol, strategy, current_price, min_dte, max_dte):
     legs = STRATEGY_LEGS.get(strategy, ())
-    legs_desc = "; ".join(f"{side} leg: {signal}" for side, signal in legs) or "none"
-    user_prompt = (
-        f"Strategy from the strategy agent: {strategy} on {symbol} at current price ${current_price:.2f}. "
-        f"Legs needed: {legs_desc}. "
-        f"Use an expiration window of {min_dte}-{max_dte} days to expiration when fetching the option chain."
+    if not legs:
+        return _no_trade(strategy, "Strategy is NO_TRADE, no trade to execute.")
+
+    account_result = await mcp_session.call_tool("get_account_info", {})
+    account = mcp_data(account_result)
+    if account is None:
+        return _no_trade(strategy, f"get_account_info failed — {mcp_error(account_result)}")
+    equity = float(account["equity"])
+
+    today = date.today()
+    chain_result = await mcp_session.call_tool("get_option_chain", {
+        "underlying_symbol": symbol,
+        # This account has no OPRA market-data agreement — the default feed fails with a 403.
+        "feed": "indicative",
+        "strike_price_gte": current_price * (1 - CHAIN_STRIKE_RANGE_PCT),
+        "strike_price_lte": current_price * (1 + CHAIN_STRIKE_RANGE_PCT),
+        "expiration_date_gte": (today + timedelta(days=min_dte)).isoformat(),
+        "expiration_date_lte": (today + timedelta(days=max_dte)).isoformat(),
+        "limit": GET_OPTION_CHAIN_LIMIT,
+    })
+    chain_data = mcp_data(chain_result)
+    if chain_data is None:
+        return _no_trade(strategy, f"get_option_chain failed — {mcp_error(chain_result)}")
+
+    contracts = [
+        {
+            "symbol": contract_symbol,
+            "ask": snapshot.get("latestQuote", {}).get("ap", 0),
+            "bid": snapshot.get("latestQuote", {}).get("bp", 0),
+        }
+        for contract_symbol, snapshot in chain_data.get("snapshots", {}).items()
+    ]
+
+    chosen_legs = []
+    for side, signal in legs:
+        chosen = select_option_contract.func(contracts, signal, current_price)["chosen"]
+        if chosen is None:
+            return _no_trade(
+                strategy, f"No qualifying {signal} contract found for the {side} leg within the DTE/strike window.",
+            )
+        chosen_legs.append({"symbol": chosen["symbol"], "ask": chosen["ask"], "bid": chosen["bid"], "side": side})
+
+    if len(chosen_legs) == 1:
+        sizing = calculate_position_size.func(equity, chosen_legs[0]["ask"], legs[0][1])
+    else:
+        long_leg = next(leg for leg in chosen_legs if leg["side"] == "long")
+        short_leg = next(leg for leg in chosen_legs if leg["side"] == "short")
+        sizing = calculate_combo_position_size.func(equity, long_leg["ask"], short_leg["bid"], strategy)
+
+    should_trade = sizing["should_trade"]
+    picked = [leg["symbol"] for leg in chosen_legs]
+    reasoning = (
+        f"Selected {picked}, sized to {sizing['qty']} contract(s) "
+        f"(risk-gated to ${sizing['risk_dollars']:.2f} of equity, contract cost ${sizing['contract_cost']:.2f})."
+        if should_trade else
+        f"Selected {picked}, but the risk-gated quantity is 0 (contract cost ${sizing['contract_cost']:.2f} "
+        f"exceeds the risk budget) — trade not placed."
     )
-    # Only offer the sizing tool the leg count actually needs — every local/MCP tool schema is
-    # resent every turn (see llm_tools.py), so a combo call that never needs
-    # calculate_position_size (and vice versa) would otherwise pay for both schemas on every
-    # single-leg call too. Keeping this lean matters more now than it used to: a combo's extra
-    # leg (two contract selections, a second quote in context) already pushes a request closer to
-    # the account's fixed per-minute token ceiling — see llm_tools._is_oversized_request_error.
-    sizing_tool = calculate_combo_position_size if len(legs) == 2 else calculate_position_size
-    text, _ = await run_agent(
-        SYSTEM_PROMPT, user_prompt, mcp_session,
-        mcp_tool_names={"get_account_info", "get_option_chain"},
-        local_tools=[select_option_contract, sizing_tool],
-        required_keys={"strategy", "legs", "qty", "should_trade", "reasoning"},
-    )
-    return parse_json_response(text, required_keys={"strategy", "legs", "qty", "should_trade", "reasoning"})
+    return {
+        "strategy": strategy,
+        "legs": chosen_legs if should_trade else [],
+        "qty": sizing["qty"],
+        "should_trade": should_trade,
+        "reasoning": reasoning,
+    }
 
 
 async def _main():
-    sys.path.insert(0, str(Path(__file__).parent.parent / "mcp_server"))
-    sys.path.insert(0, str(Path(__file__).parent.parent / "strategy"))
-    from momentum_strategy import MAX_DTE, MIN_DTE, SYMBOL
     from mcp_client import connect
+    from momentum_strategy import MAX_DTE, MIN_DTE, SYMBOL
 
     async with connect() as session:
         print(await assess_risk(session, SYMBOL, "LONG_CALL", 716.43, MIN_DTE, MAX_DTE))

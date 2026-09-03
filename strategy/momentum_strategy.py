@@ -49,6 +49,12 @@ MIN_DTE = 5
 MAX_DTE = 21
 OTM_PCT = 0.02
 
+# Risk agent's option-chain fetch window: must be wider than OTM_PCT so the actual target strike
+# always falls inside the fetched range. This account has no OPRA market-data agreement (the risk
+# agent always passes feed="indicative").
+CHAIN_STRIKE_RANGE_PCT = 0.10
+GET_OPTION_CHAIN_LIMIT = 50
+
 RISK_PCT = 0.01
 MAX_CONTRACTS = 5
 
