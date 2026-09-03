@@ -13,7 +13,7 @@ execution layer.
 
 5-day price momentum across the whole trading universe (`UNIVERSE`,
 `NASDAQ_100 ∪ SP_100`). Each cycle, `screen_universe` keeps only the top
-`TOP_N_HOTTEST` (5) symbols by momentum strength that also cross
+`TOP_N_HOTTEST` (3) symbols by momentum strength that also cross
 `MOMENTUM_THRESHOLD` (`BUY_CALL` above +1%, `BUY_PUT` below -1%, otherwise
 `NO_TRADE`). Above the strategy layer, `multi_agent/`'s sentiment and
 strategy agents then decide, per symbol, whether to trade a plain long

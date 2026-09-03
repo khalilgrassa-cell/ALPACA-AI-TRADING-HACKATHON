@@ -21,7 +21,7 @@ tracked in Alpaca's own UI rather than a separate local log.
 
 Per candidate, the chain runs Sentiment → Strategy → Risk → Trading in turn:
 the Universe Scan ranks the whole trading universe by momentum strength and
-keeps only the top `TOP_N_HOTTEST` (5) symbols; each of those gets a
+keeps only the top `TOP_N_HOTTEST` (3) symbols; each of those gets a
 sentiment read, then a strategy choice (a plain long option, or a
 higher-conviction 2-leg combo — see "Strategies" below), then contract
 selection/sizing, then execution.
@@ -216,7 +216,10 @@ watchdog around each turn (`CALL_TIMEOUT_SECONDS_PER_MODEL` in
 `run_agent`) scales with the number of models being tried, since a single
 call can now walk the whole fallback chain.
 
-`TOP_N_HOTTEST` (currently 5) caps how many candidates the Universe Scan
+`TOP_N_HOTTEST` (currently 3 — lowered from 5 on 2026-09-03 after live evidence
+that Groq's per-model rate limits are enforced org-wide, not per API key, so a
+single cycle's own candidate loop alone could exhaust every model in the
+fallback chain) caps how many candidates the Universe Scan
 hands to the Sentiment → Strategy → Risk → Trader chain each cycle — raising
 it multiplies both Groq token usage and Alpaca order activity roughly
 linearly, since each candidate runs its own multi-turn agent chain
@@ -329,9 +332,9 @@ for the `Authorization` header — not the broader classic token used
 elsewhere in this project — since this one now lives on a third-party
 service.
 
-Running the full cycle every 15 minutes instead of once a day multiplies
+Running the full cycle every 30 minutes instead of once a day multiplies
 Groq token usage and Alpaca order activity accordingly — each run puts up to
-`TOP_N_HOTTEST` (5) candidates through the Sentiment → Strategy → Risk →
+`TOP_N_HOTTEST` (3) candidates through the Sentiment → Strategy → Risk →
 Trader chain, so this is meaningfully more API-hungry than the original
 once-daily cadence even at this lower candidate cap. Watch for the
 per-minute token-budget behavior described in "Model & cost" above under

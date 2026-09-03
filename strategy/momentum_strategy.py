@@ -63,7 +63,15 @@ STOP_LOSS_PCT = -0.20
 EXIT_DTE_BUFFER = 2
 
 MAX_CYCLE_RISK_PCT = 0.05  # hard cap on aggregate new-position risk across all candidates in one cycle
-TOP_N_HOTTEST = 5  # universe scan keeps only the top-N symbols by momentum strength ("hottest"/trending)
+# 2026-09-03: lowered from 5 to 3 after live evidence that Groq enforces its per-model rate
+# limits at the *organization* level, not per API key (confirmed against Groq's own docs) — so a
+# second API key for exit management (see exit_manager.py) didn't add any real headroom, and a
+# single Trading Cycle run's own candidate loop was enough on its own to exhaust every model in
+# MODELS simultaneously (observed live: even the 2nd/3rd fallback models got rate-limited, not
+# just the 1st), inflating a run past its 30-minute schedule. Each candidate runs a full
+# Sentiment -> Strategy -> Risk -> Trading chain, so this is the most direct lever on a single
+# cycle's own Groq request/token volume without touching the exit-check schedule.
+TOP_N_HOTTEST = 3  # universe scan keeps only the top-N symbols by momentum strength ("hottest"/trending)
 
 # The options-strategy menu the Strategy Agent chooses from, and the leg(s) each one needs.
 # Each leg is (side, directional_signal): "long" -> buy_to_open, "short" -> sell_to_open, and the
