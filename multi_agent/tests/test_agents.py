@@ -1,12 +1,11 @@
-"""Unit tests for the risk/trading agents. risk_agent is deterministic (no LLM) — mocks the MCP
-session directly. trading_agent is still LLM-driven — mocks llm_tools.run_agent instead. Neither
-needs a Groq API key, MCP server, or network access."""
+"""Unit tests for the risk/trading agents — both deterministic (no LLM), so these mock the MCP
+session directly. Neither needs a Groq API key, MCP server, or network access."""
 import asyncio
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -14,6 +13,10 @@ import risk_agent
 import trading_agent
 
 EXP = (date.today() + timedelta(days=10)).strftime("%y%m%d")  # inside risk_agent's 5-21 DTE window
+
+
+def filled_at(minutes_ago):
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat().replace("+00:00", "Z")
 
 
 def mcp_result(data):
@@ -114,48 +117,114 @@ def test_assess_risk_reports_should_trade_false_on_get_account_info_failure():
 
 
 def test_submit_order_uses_expected_tools_and_contract():
-    canned = '{"order_submitted": true, "order_result": {"id": "abc"}, "reasoning": "done"}'
+    session = fake_session(mcp_result({"id": "abc", "status": "pending_new"}))
     chosen_contract = {"symbol": "QQQ260904C00731000", "ask": 0.91}
-    with patch.object(trading_agent, "run_agent", new=AsyncMock(return_value=(canned, []))) as mock_run:
-        result = asyncio.run(trading_agent.submit_order(
-            mcp_session="fake-session", chosen_contract=chosen_contract, qty=3,
-        ))
+
+    result = asyncio.run(trading_agent.submit_order(session, chosen_contract=chosen_contract, qty=3))
 
     assert result["order_submitted"] is True
-    args, kwargs = mock_run.call_args
-    assert "QQQ260904C00731000" in args[1] and "3" in args[1] and "buy_to_open" in args[1]
-    assert kwargs["mcp_tool_names"] == {"place_option_order"}
-    assert kwargs["local_tools"] == []
+    call = session.call_tool.call_args
+    assert call.args[0] == "place_option_order"
+    assert call.args[1] == {
+        "symbol": "QQQ260904C00731000", "qty": "3", "side": "buy",
+        "position_intent": "buy_to_open", "type": "market", "time_in_force": "day",
+    }
 
 
 def test_submit_order_short_side_uses_sell_to_open():
-    canned = '{"order_submitted": true, "order_result": {"id": "abc"}, "reasoning": "done"}'
+    session = fake_session(mcp_result({"id": "abc", "status": "pending_new"}))
     chosen_contract = {"symbol": "QQQ260904P00700000", "ask": 1.1, "bid": 1.0}
-    with patch.object(trading_agent, "run_agent", new=AsyncMock(return_value=(canned, []))) as mock_run:
-        asyncio.run(trading_agent.submit_order(
-            mcp_session="fake-session", chosen_contract=chosen_contract, qty=3, side="short",
-        ))
 
-    args, _ = mock_run.call_args
-    assert "sell_to_open" in args[1]
+    asyncio.run(trading_agent.submit_order(session, chosen_contract=chosen_contract, qty=3, side="short"))
+
+    call = session.call_tool.call_args
+    assert call.args[1]["side"] == "sell"
+    assert call.args[1]["position_intent"] == "sell_to_open"
 
 
-def test_manage_exits_uses_expected_tools_regardless_of_todays_candidates():
-    canned = '{"open_positions": 1, "exits": [{"symbol": "AAPL260904C00230000", "reason": "TAKE_PROFIT", "closed": false}], "reasoning": "one exit found"}'
-    with patch.object(trading_agent, "run_agent", new=AsyncMock(return_value=(canned, []))) as mock_run:
-        result = asyncio.run(trading_agent.manage_exits(mcp_session="fake-session", execute_exits=False))
+def test_submit_order_reports_failure_without_raising():
+    session = fake_session(mcp_error_result("insufficient buying power"))
+
+    result = asyncio.run(trading_agent.submit_order(
+        session, chosen_contract={"symbol": "QQQ260904C00731000", "ask": 0.91}, qty=3,
+    ))
+
+    assert result["order_submitted"] is False
+    assert "insufficient buying power" in result["reasoning"]
+
+
+def test_manage_exits_reports_take_profit_without_closing_when_execute_exits_is_false():
+    position = {"symbol": f"AAPL{EXP}C00230000", "unrealized_plpc": "0.25"}
+    session = fake_session(mcp_result({"result": [position]}))
+
+    result = asyncio.run(trading_agent.manage_exits(session, execute_exits=False))
 
     assert result["open_positions"] == 1
-    args, kwargs = mock_run.call_args
-    assert "execute_exits=False" in args[1]
-    assert kwargs["mcp_tool_names"] == {"get_all_positions", "close_position"}
-    assert [tool.name for tool in kwargs["local_tools"]] == ["check_exit_rule"]
+    assert result["exits"] == [{"symbol": position["symbol"], "reason": "TAKE_PROFIT", "closed": False}]
+    session.call_tool.assert_called_once_with("get_all_positions", {})  # no close_position call
 
 
-def test_manage_exits_passes_execute_exits_flag_through():
-    canned = '{"open_positions": 0, "exits": [], "reasoning": "nothing open"}'
-    with patch.object(trading_agent, "run_agent", new=AsyncMock(return_value=(canned, []))) as mock_run:
-        asyncio.run(trading_agent.manage_exits(mcp_session="fake-session", execute_exits=True))
+def test_manage_exits_closes_a_take_profit_position_when_execute_exits_is_true():
+    position = {"symbol": f"AAPL{EXP}C00230000", "unrealized_plpc": "0.25"}
+    session = fake_session(mcp_result({"result": [position]}), mcp_result({"status": "closed"}))
 
-    args, _ = mock_run.call_args
-    assert "execute_exits=True" in args[1]
+    result = asyncio.run(trading_agent.manage_exits(session, execute_exits=True))
+
+    assert result["exits"] == [{"symbol": position["symbol"], "reason": "TAKE_PROFIT", "closed": True}]
+    close_call = session.call_tool.call_args_list[1]
+    assert close_call.args == ("close_position", {"symbol_or_asset_id": position["symbol"]})
+
+
+def test_manage_exits_holds_a_stop_loss_position_opened_too_recently():
+    position = {"symbol": f"AAPL{EXP}C00230000", "unrealized_plpc": "-0.25"}
+    orders = [{"position_intent": "buy_to_open", "filled_at": filled_at(minutes_ago=5)}]
+    session = fake_session(mcp_result({"result": [position]}), mcp_result({"result": orders}))
+
+    result = asyncio.run(trading_agent.manage_exits(session, execute_exits=True))
+
+    # Too soon after opening (< MIN_HOLD_MINUTES_BEFORE_STOP_LOSS) — held instead of closed.
+    assert result["exits"] == [{"symbol": position["symbol"], "reason": None, "closed": False}]
+    assert session.call_tool.call_count == 2  # get_all_positions, get_orders — no close_position
+
+
+def test_manage_exits_closes_a_stop_loss_position_held_long_enough():
+    position = {"symbol": f"AAPL{EXP}C00230000", "unrealized_plpc": "-0.25"}
+    orders = [{"position_intent": "buy_to_open", "filled_at": filled_at(minutes_ago=60)}]
+    session = fake_session(
+        mcp_result({"result": [position]}), mcp_result({"result": orders}), mcp_result({"status": "closed"}),
+    )
+
+    result = asyncio.run(trading_agent.manage_exits(session, execute_exits=True))
+
+    assert result["exits"] == [{"symbol": position["symbol"], "reason": "STOP_LOSS", "closed": True}]
+
+
+def test_manage_exits_closes_a_stop_loss_position_when_opening_fill_cant_be_found():
+    # Fails open: if the opening fill can't be determined, don't let a lookup gap block a real
+    # stop-loss indefinitely.
+    position = {"symbol": f"AAPL{EXP}C00230000", "unrealized_plpc": "-0.25"}
+    session = fake_session(
+        mcp_result({"result": [position]}), mcp_result({"result": []}), mcp_result({"status": "closed"}),
+    )
+
+    result = asyncio.run(trading_agent.manage_exits(session, execute_exits=True))
+
+    assert result["exits"] == [{"symbol": position["symbol"], "reason": "STOP_LOSS", "closed": True}]
+
+
+def test_manage_exits_does_not_look_up_order_history_for_a_holding_position():
+    position = {"symbol": f"AAPL{EXP}C00230000", "unrealized_plpc": "0.05"}
+    session = fake_session(mcp_result({"result": [position]}))
+
+    result = asyncio.run(trading_agent.manage_exits(session, execute_exits=True))
+
+    assert result["exits"] == [{"symbol": position["symbol"], "reason": None, "closed": False}]
+    session.call_tool.assert_called_once_with("get_all_positions", {})  # no get_orders, no close_position
+
+
+def test_manage_exits_reports_failure_without_raising():
+    session = fake_session(mcp_error_result("rate limited"))
+
+    result = asyncio.run(trading_agent.manage_exits(session, execute_exits=False))
+
+    assert result == {"open_positions": 0, "exits": [], "reasoning": "get_all_positions failed — rate limited"}

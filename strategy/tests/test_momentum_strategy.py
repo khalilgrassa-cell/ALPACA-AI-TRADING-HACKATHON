@@ -70,6 +70,29 @@ def test_select_contract_no_trade_returns_none():
     assert select_contract([], "NO_TRADE", current_price=716.43) is None
 
 
+def test_select_contract_rejects_a_contract_with_no_bid():
+    exp = (date.today() + timedelta(days=10)).strftime("%y%m%d")
+    contracts = [parse_contract(f"QQQ{exp}C00730000", {"latestQuote": {"ap": 1.0, "bp": 0}})]
+    assert select_contract(contracts, "BUY_CALL", current_price=716.43) is None
+
+
+def test_select_contract_rejects_a_contract_with_too_wide_a_spread():
+    exp = (date.today() + timedelta(days=10)).strftime("%y%m%d")
+    # (1.0 - 0.5) / 0.75 = 66.7% spread, well above MAX_SPREAD_PCT.
+    contracts = [parse_contract(f"QQQ{exp}C00730000", {"latestQuote": {"ap": 1.0, "bp": 0.5}})]
+    assert select_contract(contracts, "BUY_CALL", current_price=716.43) is None
+
+
+def test_select_contract_skips_an_illiquid_contract_in_favor_of_a_liquid_one_farther_from_target():
+    exp = (date.today() + timedelta(days=10)).strftime("%y%m%d")
+    contracts = [
+        parse_contract(f"QQQ{exp}C00730000", {"latestQuote": {"ap": 1.0, "bp": 0}}),  # closest strike, no bid
+        parse_contract(f"QQQ{exp}C00700000", {"latestQuote": {"ap": 5.0, "bp": 4.9}}),  # farther, liquid
+    ]
+    chosen = select_contract(contracts, "BUY_CALL", current_price=716.43)
+    assert chosen["strike"] == 700.0
+
+
 def test_calculate_position_size_gated():
     result = calculate_position_size(equity=100000, contract_ask=0.91, signal="BUY_CALL")
     assert result["should_trade"] is True

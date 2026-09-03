@@ -55,12 +55,31 @@ OTM_PCT = 0.02
 CHAIN_STRIKE_RANGE_PCT = 0.10
 GET_OPTION_CHAIN_LIMIT = 50
 
+# 2026-09-03: contract selection previously picked purely by strike distance, with no check on
+# whether the contract can actually be exited at a reasonable price. Live evidence: an illiquid
+# contract's spread alone can exceed the whole trade's edge (an ALNY risk-reversal combo lost
+# $945 closing ~2 minutes after opening — bid/ask noise on thin contracts, not a real price move),
+# and some chain snapshots have bid=0 (no real market to sell into at all). Liquidity/spread
+# filtering on contract selection is standard practice for retail options strategies — see
+# strategy/README.md's "Research-informed changes" section for sources. MAX_SPREAD_PCT is the
+# (ask - bid) / mid ratio above which a contract is rejected outright.
+MAX_SPREAD_PCT = 0.25
+
 RISK_PCT = 0.01
 MAX_CONTRACTS = 5
 
 TAKE_PROFIT_PCT = 0.20
 STOP_LOSS_PCT = -0.20
 EXIT_DTE_BUFFER = 2
+
+# 2026-09-03: a STOP_LOSS this session closed a position ~2 minutes after it opened (an ALNY
+# risk-reversal combo, -$945) -- consistent with bid/ask spread and IV noise on a leveraged option
+# rather than a real move in the underlying (see strategy/README.md's "Research-informed changes"
+# for sources on why a raw option-price stop whipsaws easily). Since Alpaca's own unrealized_plpc
+# can't be recomputed off a cleaner mark from here, this gates STOP_LOSS specifically (never
+# TAKE_PROFIT or TIME_EXIT) on a minimum holding period, so a position gets at least one full
+# exit-management cycle to shake off entry noise before a loss can be realized.
+MIN_HOLD_MINUTES_BEFORE_STOP_LOSS = 30
 
 MAX_CYCLE_RISK_PCT = 0.05  # hard cap on aggregate new-position risk across all candidates in one cycle
 # 2026-09-03: lowered from 5 to 3 after live evidence that Groq enforces its per-model rate
@@ -137,8 +156,19 @@ def parse_contract(symbol, data):
     }
 
 
+def _is_liquid_enough(contract):
+    """Rejects a contract with no real bid (nothing to sell into) or a spread wide enough that
+    the round-trip cost alone could exceed the trade's edge before any price move happens."""
+    ask, bid = contract["ask"], contract["bid"]
+    if ask <= 0 or bid <= 0:
+        return False
+    mid = (ask + bid) / 2
+    return (ask - bid) / mid <= MAX_SPREAD_PCT
+
+
 def select_contract(contracts, signal, current_price):
-    """Contract selection: closest strike to the target OTM offset, within the DTE window."""
+    """Contract selection: closest strike to the target OTM offset, within the DTE window, among
+    contracts liquid enough to realistically exit later (see MAX_SPREAD_PCT)."""
     opt_type = {"BUY_CALL": "C", "BUY_PUT": "P"}.get(signal)
     if opt_type is None:
         return None
@@ -146,7 +176,9 @@ def select_contract(contracts, signal, current_price):
     today = date.today()
     candidates = [
         c for c in contracts
-        if c["type"] == opt_type and MIN_DTE <= (c["expiration"] - today).days <= MAX_DTE and c["ask"] > 0
+        if c["type"] == opt_type
+        and MIN_DTE <= (c["expiration"] - today).days <= MAX_DTE
+        and _is_liquid_enough(c)
     ]
     return min(candidates, key=lambda c: abs(c["strike"] - target)) if candidates else None
 
