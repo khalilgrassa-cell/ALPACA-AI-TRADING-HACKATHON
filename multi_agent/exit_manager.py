@@ -1,7 +1,7 @@
 """Runs exit management alone — no universe scan, no new candidates, no per-candidate Sentiment/
 Strategy/Risk/Order chain. Protecting an already-open position from an adverse intraday move is
 more time-sensitive than finding new entries, so this is meant to be scheduled more often (every
-15 minutes) than the full orchestrator.py cycle (every 30 minutes, which also runs its own exit
+10 minutes) than the full orchestrator.py cycle (every 30 minutes, which also runs its own exit
 check at the end) — see .github/workflows/exit-management-v2.yml."""
 import asyncio
 import os
@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "strategy"))
 # Since confirmed NOT to actually help: Groq enforces these limits at the *organization* level, not
 # per API key, so a second key draws on the identical shared budget regardless. Left in place since
 # it's harmless (falls back to the shared key if unset) — the real mitigations are this cycle's
-# 15-minute interval (widened from 5) and a lower TOP_N_HOTTEST on the trading cycle's own side.
+# 10-minute interval (widened from 5) and a lower TOP_N_HOTTEST on the trading cycle's own side.
 if os.environ.get("GROQ_API_KEY_EXITS"):
     os.environ["GROQ_API_KEY"] = os.environ["GROQ_API_KEY_EXITS"]
 

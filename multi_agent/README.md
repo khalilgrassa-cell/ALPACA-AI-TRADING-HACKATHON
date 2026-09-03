@@ -328,7 +328,7 @@ POST https://api.github.com/repos/khalilgrassa-cell/ALPACA-AI-TRADING-HACKATHON/
 Headers: `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`, `Content-Type: application/json`.
 Body: `{"ref": "main"}`.
 
-Set up as two cron-job.org jobs: the exit-management URL every 15 minutes
+Set up as two cron-job.org jobs: the exit-management URL every 10 minutes
 (widened from 5 on 2026-09-03 — see the `GROQ_API_KEY_EXITS` note above),
 the multi-agent-trading URL every 30 minutes, both restricted to
 13:30-20:00 UTC on weekdays. Use a **fine-grained personal access token
