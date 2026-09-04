@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Momentum Options Desk</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,500&family=JetBrains+Mono:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap');
+
+  :root{
+    --bg:#0B0E14; --surface:#141A24; --surface-2:#1B2230; --border:#2A3242;
+    --text:#ECEFF4; --text-dim:#8B93A6;
+    --amber:#E3A63E; --amber-dim:#9C7530;
+    --green:#4FA97A; --red:#C1553D;
+    --serif:'Newsreader',Georgia,'Times New Roman',serif;
+    --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    --sans:'Source Sans 3',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --bg:#F1F2F6; --surface:#FFFFFF; --surface-2:#E7E9EF; --border:#D6D9E1;
+      --text:#12151C; --text-dim:#565E6F;
+      --amber:#B9791A; --amber-dim:#8A5C14;
+      --green:#2F8659; --red:#A63F2B;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#F1F2F6; --surface:#FFFFFF; --surface-2:#E7E9EF; --border:#D6D9E1;
+    --text:#12151C; --text-dim:#565E6F;
+    --amber:#B9791A; --amber-dim:#8A5C14;
+    --green:#2F8659; --red:#A63F2B;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg); color:var(--text); font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;
+  }
+
+  .deck{
+    max-width:1000px; margin:0 auto; padding:0 24px;
+    min-height:100vh; display:flex; flex-direction:column;
+  }
+
+  header.bar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:20px 0; border-bottom:1px solid var(--border);
+    font-family:var(--mono); font-size:0.72rem; letter-spacing:0.08em;
+    color:var(--text-dim); text-transform:uppercase; flex-shrink:0;
+  }
+  header.bar .brand{ color:var(--amber); font-weight:600; }
+  header.bar .count{ font-variant-numeric: tabular-nums; }
+
+  main{ flex:1; display:flex; align-items:center; padding:48px 0; min-height:0; }
+
+  .slide{ width:100%; }
+  .slide[hidden]{ display:none; }
+
+  .eyebrow{
+    font-family:var(--mono); font-size:0.75rem; letter-spacing:0.12em;
+    text-transform:uppercase; color:var(--amber); margin:0 0 14px;
+    display:flex; align-items:center; gap:10px;
+  }
+  .eyebrow .rule{ flex:1; height:1px; background:var(--border); }
+
+  h1.headline{
+    font-family:var(--serif); font-weight:500; font-size:clamp(2rem,4.4vw,3.2rem);
+    line-height:1.08; margin:0 0 18px; text-wrap:balance; letter-spacing:-0.01em;
+  }
+  h1.headline em{ color:var(--amber); font-style:italic; }
+
+  .lede{
+    font-size:1.15rem; line-height:1.6; color:var(--text-dim);
+    max-width:62ch; margin:0 0 32px;
+  }
+
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .grid3{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+
+  .panel{
+    background:var(--surface); border:1px solid var(--border); border-radius:6px;
+    padding:20px 22px;
+  }
+  .panel h3{
+    font-family:var(--mono); font-size:0.78rem; text-transform:uppercase;
+    letter-spacing:0.06em; color:var(--text-dim); margin:0 0 10px; font-weight:600;
+  }
+  .panel p{ margin:0; font-size:0.98rem; line-height:1.55; }
+  .panel .big{
+    font-family:var(--mono); font-size:1.7rem; color:var(--amber); font-weight:600;
+    font-variant-numeric:tabular-nums; margin-bottom:4px;
+  }
+
+  ul.list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:14px; }
+  ul.list li{
+    display:flex; gap:14px; align-items:flex-start; font-size:1.02rem; line-height:1.5;
+  }
+  ul.list li .tag{
+    flex-shrink:0; font-family:var(--mono); font-size:0.7rem; font-weight:700;
+    padding:3px 7px; border-radius:4px; text-transform:uppercase; letter-spacing:0.04em;
+    margin-top:2px;
+  }
+  .tag.ai{ background:rgba(227,166,62,0.15); color:var(--amber); border:1px solid var(--amber-dim); }
+  .tag.code{ background:rgba(79,169,122,0.14); color:var(--green); border:1px solid var(--green); }
+
+  .chain{
+    display:flex; flex-wrap:wrap; align-items:center; gap:0; margin:8px 0 30px;
+    font-family:var(--mono); font-size:0.82rem;
+  }
+  .chain .node{
+    padding:9px 13px; border-radius:5px; border:1px solid var(--border);
+    background:var(--surface); white-space:nowrap;
+  }
+  .chain .node.ai{ border-color:var(--amber-dim); color:var(--amber); }
+  .chain .arrow{ color:var(--text-dim); padding:0 8px; }
+
+  .bug{
+    border-left:3px solid var(--red); padding:4px 0 4px 16px; margin-bottom:20px;
+  }
+  .bug .name{ font-weight:600; font-size:1.03rem; margin-bottom:4px; }
+  .bug .desc{ color:var(--text-dim); font-size:0.94rem; line-height:1.5; }
+
+  table.ledger{ width:100%; border-collapse:collapse; font-size:0.95rem; }
+  table.ledger th{
+    text-align:left; font-family:var(--mono); font-size:0.7rem; text-transform:uppercase;
+    letter-spacing:0.06em; color:var(--text-dim); font-weight:600;
+    border-bottom:1px solid var(--border); padding:0 10px 10px 0;
+  }
+  table.ledger td{ padding:10px 10px 10px 0; border-bottom:1px solid var(--border); vertical-align:top; }
+  table.ledger tr:last-child td{ border-bottom:none; }
+  .mono-num{ font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  .pos{ color:var(--green); } .neg{ color:var(--red); }
+
+  .stamp{
+    font-family:var(--mono); font-size:0.85rem; color:var(--text-dim);
+    display:inline-flex; align-items:center; gap:8px; margin-top:6px;
+  }
+  .dot-live{ width:7px; height:7px; border-radius:50%; background:var(--green);
+    box-shadow:0 0 0 3px rgba(79,169,122,0.2); }
+
+  .links{ display:flex; flex-direction:column; gap:10px; margin-top:8px; }
+  .links a{
+    color:var(--text); text-decoration:none; font-family:var(--mono); font-size:0.95rem;
+    padding:11px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface);
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .links a span.arrow{ color:var(--amber); }
+  .links a:hover{ border-color:var(--amber-dim); }
+  .links a:focus-visible{ outline:2px solid var(--amber); outline-offset:2px; }
+
+  footer.controls{
+    display:flex; align-items:center; justify-content:space-between; gap:16px;
+    padding:18px 0 28px; border-top:1px solid var(--border); flex-shrink:0;
+  }
+  .navbtn{
+    font-family:var(--mono); font-size:0.8rem; letter-spacing:0.04em; text-transform:uppercase;
+    background:var(--surface); color:var(--text); border:1px solid var(--border);
+    border-radius:5px; padding:10px 16px; cursor:pointer;
+  }
+  .navbtn:hover{ border-color:var(--amber-dim); color:var(--amber); }
+  .navbtn:focus-visible{ outline:2px solid var(--amber); outline-offset:2px; }
+  .navbtn:disabled{ opacity:0.35; cursor:default; }
+  .dots{ display:flex; gap:7px; }
+  .dots button{
+    width:7px; height:7px; padding:0; border-radius:50%; border:none; background:var(--border);
+    cursor:pointer;
+  }
+  .dots button.active{ background:var(--amber); width:20px; border-radius:4px; }
+  .dots button:focus-visible{ outline:2px solid var(--amber); outline-offset:3px; }
+
+  .title-slide{ text-align:left; }
+  .title-slide .kicker{
+    font-family:var(--mono); font-size:0.8rem; letter-spacing:0.14em; text-transform:uppercase;
+    color:var(--text-dim); margin-bottom:22px;
+  }
+  .title-slide h1{
+    font-family:var(--serif); font-size:clamp(2.6rem,7vw,4.6rem); line-height:1.02;
+    font-weight:500; margin:0 0 20px; letter-spacing:-0.015em;
+  }
+  .title-slide .sub{ font-size:1.25rem; color:var(--text-dim); max-width:56ch; line-height:1.55; margin-bottom:34px; }
+  .idbadges{ display:flex; gap:12px; flex-wrap:wrap; }
+  .idbadge{
+    font-family:var(--mono); font-size:0.78rem; padding:8px 13px; border:1px solid var(--border);
+    border-radius:5px; color:var(--text-dim);
+  }
+  .idbadge b{ color:var(--text); font-weight:600; }
+
+  @media (max-width:680px){
+    .grid2,.grid3{ grid-template-columns:1fr; }
+    main{ padding:28px 0; }
+  }
+  @media (prefers-reduced-motion:no-preference){
+    .slide{ animation:rise 0.32s ease both; }
+    @keyframes rise{ from{ opacity:0; transform:translateY(6px);} to{ opacity:1; transform:none; } }
+  }
+</style>
+</head>
+<body>
+
+<div class="deck">
+  <header class="bar">
+    <span class="brand">MOMENTUM OPTIONS DESK</span>
+    <span class="count"><span id="slideNo">01</span> / <span id="slideTotal">09</span></span>
+  </header>
+
+  <main>
+
+    <section class="slide" data-title="Cover">
+      <div class="title-slide">
+        <div class="kicker">lablab.ai × Alpaca — AI Trading Agents Hackathon</div>
+        <h1>An options desk<br>run by <em>agents.</em></h1>
+        <p class="sub">A momentum-scanning, options-trading pipeline that watches 168 tickers,
+        decides through a chain of LLM and deterministic agents, and executes on Alpaca —
+        talking to the market only through Alpaca's own MCP server.</p>
+        <div class="idbadges">
+          <div class="idbadge">Paper account <b>PA39Q320P4PP</b></div>
+          <div class="idbadge">Started <b>$100,000</b></div>
+          <div class="idbadge"><span class="dot-live" style="display:inline-block;margin-right:6px;"></span>Live now</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="The brief" hidden>
+      <div class="eyebrow">The brief<span class="rule"></span>01</div>
+      <h1 class="headline">Three rules, non-negotiable.</h1>
+      <p class="lede">The hackathon's requirements shaped the architecture from day one — none of them
+      were optional, so the pipeline was built to satisfy all three at the protocol level, not just in spirit.</p>
+      <div class="grid3">
+        <div class="panel">
+          <h3>Autonomy</h3>
+          <p>The agent has to act on Alpaca's Trading API on its own — no human clicking "submit" per trade.</p>
+        </div>
+        <div class="panel">
+          <h3>MCP, not REST</h3>
+          <p>Every Alpaca call — quotes, chains, orders, positions — goes through Alpaca's official MCP server, the same tool-calling surface an LLM uses.</p>
+        </div>
+        <div class="panel">
+          <h3>Options, not equity</h3>
+          <p>The strategy has to trade options contracts, with real strike/expiry/greeks decisions — not just buy-and-hold shares.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="Architecture" hidden>
+      <div class="eyebrow">Architecture<span class="rule"></span>02</div>
+      <h1 class="headline">Six stages, one chain per cycle.</h1>
+      <p class="lede">Only two stages actually need a model's judgment. The other four are exact math
+      or a fixed tool-call sequence — so that's what they are, in plain code.</p>
+      <div class="chain">
+        <div class="node">Market Conditions</div><div class="arrow">→</div>
+        <div class="node">Universe Scan</div><div class="arrow">→</div>
+        <div class="node ai">Sentiment</div><div class="arrow">→</div>
+        <div class="node ai">Strategy</div><div class="arrow">→</div>
+        <div class="node">Risk</div><div class="arrow">→</div>
+        <div class="node">Trading</div>
+      </div>
+      <div class="grid2">
+        <div class="panel">
+          <h3>Deterministic — 4 stages</h3>
+          <p>Is the market open. Rank 168 symbols by momentum, keep the top 3. Pick a contract by delta, size the position. Submit the order, manage the exit. Zero judgment calls — so zero model latency, zero model failure mode.</p>
+        </div>
+        <div class="panel">
+          <h3>LLM-driven — 2 stages</h3>
+          <p>Sentiment reads the news. Strategy picks the trade shape. Both run on Groq, with model fallback and a second account for overflow — see next slide.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="AI logic" hidden>
+      <div class="eyebrow">AI logic<span class="rule"></span>03</div>
+      <h1 class="headline">Judgment, clamped in code.</h1>
+      <p class="lede">Both LLM agents are free to reason, but neither can act outside a boundary
+      that's enforced by Python — not just asked for in the prompt.</p>
+      <ul class="list">
+        <li><span class="tag ai">Sentiment</span>Reads recent news for a candidate. Can only push the momentum signal toward <b>NO_TRADE</b> — it can veto, but it can never invent a trade or flip direction. Enforced by <code>_clamp_signal</code>.</li>
+        <li><span class="tag ai">Strategy</span>Given the signal + sentiment + momentum strength, picks a long call, a long put, a risk-reversal combo, or no trade. Can never point a different direction than the signal it was handed. Enforced by <code>_clamp_strategy</code>.</li>
+        <li><span class="tag code">Infra</span>Groq-hosted, with automatic fallback across several models per call, then a second, genuinely separate Groq account once the first is exhausted for a turn — the daily token ceiling that once stalled a live cycle.</li>
+      </ul>
+    </section>
+
+    <section class="slide" data-title="Risk gates" hidden>
+      <div class="eyebrow">Risk gates<span class="rule"></span>04</div>
+      <h1 class="headline">Six checks between a signal and a fill.</h1>
+      <div class="grid3">
+        <div class="panel"><h3>Position size</h3><p>1% of equity per trade, capped at 5 contracts.</p></div>
+        <div class="panel"><h3>Cycle cap</h3><p>5% of equity max new risk across every candidate in one cycle.</p></div>
+        <div class="panel"><h3>Liquidity</h3><p>Reject any contract with no bid, or spread over 25% of mid.</p></div>
+        <div class="panel"><h3>Delta targeting</h3><p>Strike picked by proximity to 0.30 delta, not a flat % — adapts to each name's own volatility.</p></div>
+        <div class="panel"><h3>Stop-loss hold</h3><p>30-minute minimum hold before a stop-loss can fire, so spread noise can't trigger it.</p></div>
+        <div class="panel"><h3>Combo sequencing</h3><p>A 2-leg combo's short leg only fires after the long leg is confirmed filled.</p></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="Debugged live" hidden>
+      <div class="eyebrow">Debugged live<span class="rule"></span>05</div>
+      <h1 class="headline">The bugs that only a live account finds.</h1>
+      <p class="lede">Each of these only surfaced against real Alpaca and Groq responses —
+      not something a mock would have caught.</p>
+      <div class="bug">
+        <div class="name">Take-profit / stop-loss asymmetry</div>
+        <div class="desc">+10% take-profit against a -20% stop-loss meant every losing streak outweighed every win. Fixed to a symmetric ±20%.</div>
+      </div>
+      <div class="bug">
+        <div class="name">Option chain exhausted by one side</div>
+        <div class="desc"><code>get_option_chain</code>'s result limit is shared across the whole strike range — calls alone could fill it before a single put, or a genuinely OTM strike, was ever reached. Fixed by fetching each option type in its own one-sided range.</div>
+      </div>
+      <div class="bug">
+        <div class="name">Groq's token cap is org-wide, not per key</div>
+        <div class="desc">A second API key on the <em>same</em> Groq account shares one budget. Real relief needed a genuinely separate account — confirmed live against an actual 429 on Groq's daily token cap.</div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="Infra & testing" hidden>
+      <div class="eyebrow">Infra &amp; testing<span class="rule"></span>06</div>
+      <h1 class="headline">No server, no shortcuts.</h1>
+      <div class="grid2">
+        <div class="panel">
+          <div class="big">30 / 10 min</div>
+          <p>Full pipeline every 30 minutes, exit checks every 10 — both GitHub Actions jobs, fired by an external scheduler, capped at a 10-minute timeout so a hang can't eat a slot silently.</p>
+        </div>
+        <div class="panel">
+          <div class="big">131 tests</div>
+          <p>Fully mocked — strategy math, the LLM tool-calling loop, every agent's direction/veto clamp, and the full orchestrator wiring — no live credentials needed to verify correctness.</p>
+        </div>
+      </div>
+      <ul class="list" style="margin-top:22px;">
+        <li><span class="tag code">Secrets</span>Alpaca and Groq credentials live only in GitHub Actions secrets — <code>.env</code> is gitignored and checked before every push.</li>
+        <li><span class="tag code">Deploy</span>Docker + docker-compose for local runs; GitHub Actions for the scheduled live pipeline — no server to provision or babysit.</li>
+      </ul>
+    </section>
+
+    <section class="slide" data-title="Live proof" hidden>
+      <div class="eyebrow">Live proof<span class="rule"></span>07</div>
+      <h1 class="headline">Running right now, on a clean account.</h1>
+      <p class="lede">Not a backtest, not a demo mode — a dedicated paper account created after
+      the hackathon's kickoff, trading on schedule with no manual intervention.</p>
+      <table class="ledger">
+        <thead><tr><th>Field</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Account</td><td class="mono-num">PA39Q320P4PP</td></tr>
+          <tr><td>Opened at</td><td class="mono-num">$100,000.00</td></tr>
+          <tr><td>Current equity</td><td class="mono-num">$99,334.38</td></tr>
+          <tr><td>Universe scanned / cycle</td><td class="mono-num">168 symbols</td></tr>
+          <tr><td>Candidates carried forward / cycle</td><td class="mono-num">top 3</td></tr>
+        </tbody>
+      </table>
+      <div class="stamp"><span class="dot-live"></span>Both scheduled workflows completing on time, every cycle, as of this deck.</div>
+    </section>
+
+    <section class="slide" data-title="Links" hidden>
+      <div class="eyebrow">Links<span class="rule"></span>08</div>
+      <h1 class="headline">Everything's open.</h1>
+      <p class="lede">Public repo, live run history, and the one-page write-up — no login required.</p>
+      <div class="links">
+        <a href="https://github.com/khalilgrassa-cell/ALPACA-AI-TRADING-HACKATHON" target="_blank" rel="noopener">Source — github.com/khalilgrassa-cell/ALPACA-AI-TRADING-HACKATHON <span class="arrow">↗</span></a>
+        <a href="https://github.com/khalilgrassa-cell/ALPACA-AI-TRADING-HACKATHON/actions" target="_blank" rel="noopener">Live runs — scheduled workflow history <span class="arrow">↗</span></a>
+        <a href="https://github.com/khalilgrassa-cell/ALPACA-AI-TRADING-HACKATHON/blob/main/SUBMISSION.md" target="_blank" rel="noopener">One-page write-up — SUBMISSION.md <span class="arrow">↗</span></a>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="controls">
+    <button class="navbtn" id="prevBtn">← Prev</button>
+    <div class="dots" id="dots"></div>
+    <button class="navbtn" id="nextBtn">Next →</button>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var dotsWrap = document.getElementById('dots');
+  var slideNo = document.getElementById('slideNo');
+  var slideTotal = document.getElementById('slideTotal');
+  var prevBtn = document.getElementById('prevBtn');
+  var nextBtn = document.getElementById('nextBtn');
+  var current = 0;
+
+  slideTotal.textContent = String(slides.length).padStart(2,'0');
+
+  slides.forEach(function(_, i){
+    var b = document.createElement('button');
+    b.setAttribute('aria-label', 'Go to slide ' + (i+1));
+    b.addEventListener('click', function(){ show(i); });
+    dotsWrap.appendChild(b);
+  });
+
+  function show(i){
+    current = Math.max(0, Math.min(slides.length - 1, i));
+    slides.forEach(function(s, idx){ s.hidden = idx !== current; });
+    Array.prototype.forEach.call(dotsWrap.children, function(d, idx){
+      d.classList.toggle('active', idx === current);
+    });
+    slideNo.textContent = String(current + 1).padStart(2,'0');
+    prevBtn.disabled = current === 0;
+    nextBtn.disabled = current === slides.length - 1;
+    try { localStorage.setItem('deckSlide', String(current)); } catch(e) {}
+  }
+
+  prevBtn.addEventListener('click', function(){ show(current - 1); });
+  nextBtn.addEventListener('click', function(){ show(current + 1); });
+
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Enter'){ e.preventDefault(); show(current + 1); }
+    if (e.key === 'ArrowLeft'){ e.preventDefault(); show(current - 1); }
+  });
+
+  var start = 0;
+  try {
+    var saved = parseInt(localStorage.getItem('deckSlide'), 10);
+    if (!isNaN(saved)) start = saved;
+  } catch(e) {}
+  show(start);
+})();
+</script>
+</body>
+</html>
