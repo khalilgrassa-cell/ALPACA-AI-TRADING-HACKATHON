@@ -4,21 +4,24 @@ lablab.ai × Alpaca AI Trading Agents Hackathon submission.
 
 A multi-agent options trading pipeline that talks to Alpaca **only** through
 Alpaca's official MCP server — the same interface an LLM agent's tool-use
-loop would call — rather than the REST API, SDK, or CLI directly. Two
-deterministic (no-LLM) stages — is the market open, and a momentum scan of
-the whole trading universe — feed four specialized LLM agents (sentiment,
-strategy selection, risk, execution), running on Groq (with automatic
-fallback across several Groq-hosted models), each reasoning over a narrow
-slice of tools and handing their decision to the next stage in the chain.
-Market-open and momentum-threshold checks are exact math, not judgment
-calls, so they run as plain code instead of a model call — one fewer
-network round-trip and single point of failure per cycle. The universe scan
-ranks the whole trading universe by momentum strength and keeps the top 5
-"hottest"/trending symbols each cycle; the strategy agent then picks from a
-small menu — a plain long call/put, or a higher-conviction 2-leg
-risk-reversal combo — per candidate. There's no reporting/logging stage —
-every decision prints to stdout, and fills are tracked directly in Alpaca's
-own UI.
+loop would call — rather than the REST API, SDK, or CLI directly. Four
+deterministic (no-LLM) stages — is the market open, a momentum scan of the
+whole trading universe, contract/position-size selection, and order
+submission/exit management — bracket two genuinely LLM-driven agents
+(sentiment veto, strategy selection), running on Groq (with automatic
+fallback across several Groq-hosted models, plus an optional second Groq
+account as overflow once the primary is exhausted). Everything mechanical —
+market-open checks, momentum ranking, delta-nearest contract selection,
+position sizing, order submission, exit rules — is exact math or a fixed
+tool-call sequence with zero judgment involved, so it runs as plain code
+instead of a model call; only "is the news bad enough to veto this trade"
+and "which strategy fits this signal" genuinely need an LLM's judgment. The
+universe scan ranks the whole trading universe by momentum strength and
+keeps the top 3 "hottest"/trending symbols each cycle; the strategy agent
+then picks from a small menu — a plain long call/put, or a higher-conviction
+2-leg risk-reversal combo — per candidate. There's no reporting/logging
+stage — every decision prints to stdout, and fills are tracked directly in
+Alpaca's own UI.
 
 ## Project layout
 
@@ -30,7 +33,10 @@ own UI.
   connected to; connectivity test and tool/schema inspection scripts. See
   [`mcp_server/README.md`](mcp_server/README.md).
 - **`multi_agent/`** — the pipeline itself, its backtest, its unit tests, and
-  its Docker/Compose/CI deployment files. See
+  its Docker/Compose/CI deployment files. `market_conditions_agent.py`,
+  `universe_scanner.py`, `risk_agent.py`, and `trading_agent.py` are all
+  deterministic despite the "agent" naming carried over from an earlier
+  design; only `sentiment_agent.py` and `strategy_agent.py` call an LLM. See
   [`multi_agent/README.md`](multi_agent/README.md).
 
 ```
@@ -70,8 +76,8 @@ own UI.
 │       ├── test_exit_manager.py
 │       └── test_orchestrator.py
 ├── .github/workflows/
-│   ├── multi-agent-trading-v2.yml   # full pipeline, every 15 min during market hours
-│   └── exit-management-v2.yml       # exit-only checks, every 5 min during market hours
+│   ├── multi-agent-trading-v2.yml   # full pipeline, every 30 min during market hours
+│   └── exit-management-v2.yml       # exit-only checks, every 10 min during market hours
 ├── docker-compose.yml
 ├── requirements.txt
 ├── pytest.ini
@@ -126,7 +132,8 @@ for the exact setup and why.
 ## Safety
 
 - Order submission is gated behind `should_trade`; position closes behind
-  `EXECUTE_EXITS` (`False` by default, `multi_agent/orchestrator.py`).
+  `EXECUTE_EXITS` (`strategy/momentum_strategy.py`) — currently `True`, live
+  in paper trading.
 - The sentiment agent can only veto a signal toward `NO_TRADE` — never invent
   or flip one — enforced in code, not just prompted
   (`sentiment_agent._clamp_signal`). The strategy agent can only choose a
